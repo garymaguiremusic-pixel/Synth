@@ -19,24 +19,24 @@ SylenthAdapter::SylenthAdapter (VCCloneAudioProcessor& p, int i, String l)
 int SylenthAdapter::defaultValue() const
 {
     const float d = vc::sylenth::def (index).def;
-    return count > 0 ? vc::SylenthEngine::listValue (d, count) : roundToInt (d * 1000.0f);
+    return count > 0 ? vc::SylenthEngine::listValue (d, count) : roundToInt (d * 100.0f);
 }
 
 int SylenthAdapter::get() const
 {
     const float v = proc.getSylenth (index);
-    return count > 0 ? vc::SylenthEngine::listValue (v, count) : roundToInt (v * 1000.0f);
+    return count > 0 ? vc::SylenthEngine::listValue (v, count) : roundToInt (v * 100.0f);
 }
 
 void SylenthAdapter::set (int v)
 {
-    proc.setSylenth (index, count > 0 ? (count > 1 ? (float) v / (float) (count - 1) : 0.0f) : v / 1000.0f);
+    proc.setSylenth (index, count > 0 ? (count > 1 ? (float) v / (float) (count - 1) : 0.0f) : v / 100.0f);
 }
 
 String SylenthAdapter::text (int v) const
 {
     if (count > 0) return list[jlimit (0, count - 1, v)];
-    return String (v / 10.0, 1);
+    return String (v);
 }
 
 //==============================================================================
@@ -45,7 +45,7 @@ SpireAdapter::SpireAdapter (VCCloneAudioProcessor& p, int i, String l, Kind k, S
 
 int SpireAdapter::minimum() const
 {
-    switch (kind) { case Kind::Octave: return -4; case Kind::Semitone: return -11; case Kind::Signed: return -500; default: return 0; }
+    switch (kind) { case Kind::Octave: return -4; case Kind::Semitone: return -11; case Kind::Signed: return -50; default: return 0; }
 }
 
 int SpireAdapter::maximum() const
@@ -56,8 +56,8 @@ int SpireAdapter::maximum() const
         case Kind::Flag: return 1;
         case Kind::Octave: return 4;
         case Kind::Semitone: return 11;
-        case Kind::Signed: return 500;
-        default: return 1000;
+        case Kind::Signed: return 50;
+        default: return 100;
     }
 }
 
@@ -69,8 +69,8 @@ int SpireAdapter::decode (float v) const
         case Kind::Flag: return vc::SpireEngine::flag (v) ? 1 : 0;
         case Kind::Octave: return (int) (v * 8.99f) - 4;
         case Kind::Semitone: return (int) (v * 22.99f) - 11;
-        case Kind::Signed: return roundToInt ((v - 0.5f) * 1000.0f);
-        default: return roundToInt (v * 1000.0f);
+        case Kind::Signed: return roundToInt ((v - 0.5f) * 100.0f);
+        default: return roundToInt (v * 100.0f);
     }
 }
 
@@ -82,8 +82,8 @@ float SpireAdapter::encode (int k) const
         case Kind::Flag: return k ? 1.0f : 0.0f;
         case Kind::Octave: return ((float) (k + 4) + 0.5f) / 8.99f;
         case Kind::Semitone: return ((float) (k + 11) + 0.5f) / 22.99f;
-        case Kind::Signed: return 0.5f + (float) k / 1000.0f;
-        default: return (float) k / 1000.0f;
+        case Kind::Signed: return 0.5f + (float) k / 100.0f;
+        default: return (float) k / 100.0f;
     }
 }
 

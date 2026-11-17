@@ -155,6 +155,7 @@ if(VCCLONE_BUILD_PLUGIN)
         Plugin/CustomLookAndFeel.cpp
         Plugin/UI/VirusComponents.cpp
         Plugin/UI/ParamAdapters.cpp
+        Plugin/UI/SynthWidgets.cpp
         Plugin/VendorDelay.cpp
         Plugin/VendorReverb.cpp
         Plugin/VendorMelody.cpp

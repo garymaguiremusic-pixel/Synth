@@ -71,13 +71,13 @@ private:
     bool list;
 };
 
-/** A Sylenth engine value (0..1). Lists: index = round(v * (n-1)); knobs: 0..1000. */
+/** A Sylenth engine value (0..1). Lists: index = round(v * (n-1)); knobs: 0..100 in steps of 1. */
 class SylenthAdapter : public ParamAdapter
 {
 public:
     SylenthAdapter (VCCloneAudioProcessor& p, int index, juce::String label);
     int minimum() const override { return 0; }
-    int maximum() const override { return count > 0 ? count - 1 : 1000; }
+    int maximum() const override { return count > 0 ? count - 1 : 100; }
     int defaultValue() const override;
     int get() const override;
     void set (int v) override;
@@ -117,4 +117,34 @@ private:
     juce::String label;
     Kind kind;
     juce::StringArray list;
+};
+
+/** Shows another control on a 0.0 .. 100.0 scale moved in steps of 1.0 (the filter cutoff knobs). */
+class CutoffAdapter : public ParamAdapter
+{
+public:
+    explicit CutoffAdapter (std::unique_ptr<ParamAdapter> a, juce::String label = {}) : inner (std::move (a)), label (std::move (label)) {}
+    int minimum() const override { return 0; }
+    int maximum() const override { return 100; }
+    int defaultValue() const override { return fromInner (inner->defaultValue()); }
+    int get() const override { return fromInner (inner->get()); }
+    void set (int v) override
+    {
+        const double span = inner->maximum() - inner->minimum();
+        inner->set (inner->minimum() + juce::roundToInt (juce::jlimit (0, 100, v) / 100.0 * span));
+    }
+    juce::String text (int v) const override { return juce::String ((double) v, 1); }
+    juce::String name() const override { return label.isNotEmpty() ? label : inner->name(); }
+    void beginGesture() override { inner->beginGesture(); }
+    void endGesture() override { inner->endGesture(); }
+    juce::RangedAudioParameter* hostParameter() const override { return inner->hostParameter(); }
+
+private:
+    int fromInner (int x) const
+    {
+        const double span = inner->maximum() - inner->minimum();
+        return span > 0 ? juce::roundToInt ((x - inner->minimum()) / span * 100.0) : 0;
+    }
+    std::unique_ptr<ParamAdapter> inner;
+    juce::String label;
 };

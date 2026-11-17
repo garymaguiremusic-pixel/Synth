@@ -5,16 +5,17 @@
 #include "CustomLookAndFeel.h"
 #include "UI/VirusComponents.h"
 #include "UI/ParamAdapters.h"
+#include "UI/SynthWidgets.h"
 
 //==============================================================================
-/** The whole user interface at its base size (1000 x 580); the editor scales it. */
+/** The whole user interface at its base size (1100 x 600); the editor scales it. */
 class VCClonePanel : public juce::Component,
                      public juce::FileDragAndDropTarget,
                      private juce::Timer,
                      private juce::ListBoxModel
 {
 public:
-    static constexpr int kBaseWidth = 1000, kBaseHeight = 580;
+    static constexpr int kBaseWidth = 1100, kBaseHeight = 600;
 
     explicit VCClonePanel (VCCloneAudioProcessor&);
     ~VCClonePanel() override;
@@ -34,7 +35,7 @@ private:
         std::unique_ptr<ParamAdapter> adapter;
         std::unique_ptr<juce::Component> comp;
         std::unique_ptr<juce::Label> label;      // dropdown caption
-        enum class Kind { Knob, Combo, Toggle } kind = Kind::Knob;
+        enum class Kind { Knob, Combo, Toggle, Segment } kind = Kind::Knob;
         int cells = 1;
         int shown = INT_MIN;
     };
@@ -48,8 +49,22 @@ private:
         juce::Rectangle<float> bounds;
         bool strip = false;                       // the global strip under the synth pages
     };
+    /** A block of the compact Synth page: header (title, optional selector), optional envelope graph,
+        optional big knob, and a grid of controls that shrinks to fit. */
+    struct Section
+    {
+        juce::String title;
+        int mode = 0;
+        juce::Rectangle<float> bounds;
+        Control* header = nullptr;                // segmented selector in the header
+        Control* hero = nullptr;                  // big knob (cutoff)
+        std::vector<Control*> controls;
+        EnvelopeGraph* env = nullptr;
+        int group = -1, groupIndex = 0;           // alternatives share one block (LFO 1..4)
+    };
     struct Group
     {
+        bool header = false;                      // buttons in a Synth-page section header
         int page = 0, mode = -1, row = 0, selected = 0;
         juce::StringArray labels;
         std::vector<std::unique_ptr<juce::TextButton>> buttons;
@@ -57,7 +72,16 @@ private:
     };
 
     void timerCallback() override;
-    Control* makeControl (std::unique_ptr<ParamAdapter>);
+    Control* makeControl (std::unique_ptr<ParamAdapter>, bool forceKnob = false);
+    Control* makeSegment (std::unique_ptr<ParamAdapter>);
+    Section& addSection (int mode, juce::String title, juce::Rectangle<float> bounds, std::unique_ptr<ParamAdapter> header,
+                         std::unique_ptr<ParamAdapter> hero, std::vector<std::unique_ptr<ParamAdapter>> body,
+                         int group = -1, int groupIndex = 0);
+    Section& addEnvSection (int mode, juce::String title, juce::Rectangle<float> bounds, std::vector<std::unique_ptr<ParamAdapter>> adsrAndMore);
+    int addHeaderGroup (int mode, juce::StringArray labels);
+    void buildSynthPages();
+    void layoutSections();
+    bool sectionVisible (const Section&) const;
     Panel& addPanel (juce::String title, int page, int mode, int row, std::vector<std::unique_ptr<ParamAdapter>> adapters,
                      int group = -1, int groupIndex = 0);
     int addGroup (int page, int mode, int row, juce::StringArray labels);
@@ -98,6 +122,8 @@ private:
     std::vector<std::unique_ptr<Control>> controls;
     std::vector<Panel> panels;
     std::vector<std::unique_ptr<Group>> groups;
+    std::vector<Section> sections;
+    std::vector<std::unique_ptr<EnvelopeGraph>> envGraphs;
 
     // embedded panels from Gary's plugins
     std::unique_ptr<juce::Component> delayPanel, reverbPanel, melodyPanel, stepGrid;
