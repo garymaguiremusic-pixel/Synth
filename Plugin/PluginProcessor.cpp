@@ -496,16 +496,22 @@ void VCCloneAudioProcessor::loadAnyPatch (const vc::AnyPatch& a)
 
         case vc::PatchType::Sylenth:
         {
-            // Sylenth's parameter order is not known yet (needs the probe): keep the raw values,
-            // start from the Sylenth init sound.
             sylenthRaw = a.sylenth.values;
-            const auto init = vc::SylenthEngine::initParams();
-            for (size_t i = 0; i < init.size(); ++i) sylenthValues[i].store (init[i]);
+            vc::PatchSteps st;
+            const auto values = vc::SylenthEngine::fromSylenthPreset (a.sylenth.values, &st);
+            for (size_t i = 0; i < values.size(); ++i) sylenthValues[i].store (values[i]);
             sylenthDirty = true;
             vc::AdsrTimes amp, flt;
-            vc::SylenthEngine::extractEnvelopes (init, amp, flt);
+            vc::SylenthEngine::extractEnvelopes (values, amp, flt);
             setGlobalEnvelopes (amp, flt);
-            setParamValue (gid::arpMode, 0.0f);
+            if (st.present)
+            {
+                std::vector<vendor::StepSequencer::Step> steps;
+                for (auto& s : st.steps) steps.push_back ({ s.transpose, s.velocity, s.tie });
+                stepSeq.loadPatchSteps (steps, st.arpOn, st.mode, st.octaves, st.rateIndex, st.rateType,
+                                        (float) (st.gate * 100.0), (float) (st.swing * 100.0), st.velocityMode, st.length);
+            }
+            setParamValue (gid::arpMode, st.arpOn ? 2.0f : 0.0f);
             setMode (vc::SynthMode::Sylenth);
             patchName = a.name;
             break;
@@ -518,8 +524,8 @@ StringArray VCCloneAudioProcessor::getPatchNotes() const
 {
     StringArray s;
     if (getMode() == vc::SynthMode::Sylenth && ! sylenthRaw.empty())
-        s.add ("Sylenth preset: " + String ((int) sylenthRaw.size()) + " values read; their mapping to the Sylenth controls needs "
-               "Sylenth's parameter list (run tools/vc_probe once on your PC). The Sylenth init sound plays meanwhile.");
+        s.add ("Sylenth preset: oscillators, filters, envelopes, LFOs, mod slots and arp steps are mapped. Sylenth's own "
+               "effects are replaced by the global FX; the envelope/cutoff curves are not yet measured against Sylenth.");
     if (getMode() == vc::SynthMode::Spire)
         s.add ("Spire: modulation targets are decoded only where Spire's target ID is known (Cutoff 1 so far); "
                "the full list comes from tools/vc_probe.");

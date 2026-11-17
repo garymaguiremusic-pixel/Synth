@@ -10,19 +10,26 @@
 //   Amp envelopes A/B (or the global Amp ADSR), Mod envelopes 1/2 and LFOs 1/2 with two destinations each
 //   Mix A/B, mono/legato, portamento, bend range
 //
-// Parameters are this engine's own (normalised 0..1, see kSyParams). Importing Sylenth presets needs
-// Sylenth's VST parameter order, which the parameter probe (tools/vc_probe) produces; the 244 raw
-// values of an imported preset are kept so it can be re-mapped once that list exists.
+// Parameters are this engine's own (normalised 0..1). Sylenth presets (244 values in Sylenth's VST
+// parameter order, read from the user's Sylenth1 with tools/vc_probe) are converted by fromSylenthPreset().
 
 #include "ModeEngine.h"
 #include <array>
+#include <vector>
 
 namespace vc
 {
 namespace sylenth
 {
-    enum Dest { DNone, DCutoffA, DCutoffB, DCutoffAB, DResoAB, DPitchA, DPitchB, DPitchAB, DVolumeA, DVolumeB, DVolumeAB,
-                DPanAB, DMixAB, DDetuneAB, DPhaseAB, DNumDests };
+    // modulation destinations, in Sylenth's own order (read from Sylenth's parameter display with tools/vc_probe)
+    enum Dest { DNone, DVolumeA, DVolumeB, DVolumeAB, DPitchA, DPitchB, DPitchAB, DPhaseA, DPhaseB, DPhaseAB, DPanA, DPanB, DPanAB,
+                DCutoffA, DCutoffB, DCutoffAB, DResoA, DResoB, DResoAB, DPhaserFreq, DMixA, DMixB, DMixAB,
+                DLfo1Rate, DLfo1Gain, DLfo2Rate, DLfo2Gain, DDistAmount, DNumDests };
+    // misc modulation sources, Sylenth's order
+    enum Source { SNone, SVelocity, SModWheel, SKeyTrack, SAmpEnvA, SAmpEnvB, SModEnv1, SModEnv2, SLfo1, SLfo2, SAftertouch,
+                  SStepVelocity, SNumSources };
+    constexpr int kNumLfoWaves = 11;    // Sine, Saw, Ramp, Triangle, Pulse, HPulse, QPulse, TriSaw, Lorenz, SmpHold, Random
+    constexpr int kNumSyncs = 37;       // Off + 8/1D .. 1/256T
 
     struct ParamDef { const char* id; const char* name; float def; int steps; /* 0 = continuous, else list size */ };
 
@@ -43,6 +50,9 @@ namespace sylenth
         Lfo1 = Mod2 + 8,                    // wave rate sync gain offset dest1 amt1 dest2 amt2
         Lfo2 = Lfo1 + 9,
         MixA = Lfo2 + 9, MixB, Solo, Mono, Legato, Porta, PortaMode, Polyphony, BendRange, MainVol,
+        Lfo1Free, Lfo2Free,
+        Misc = Lfo2Free + 1,                // 4 x (source dest1 amt1 dest2 amt2): Misc 1A, 1B, 2A, 2B
+        FiltAInput = Misc + 20, FiltBInput,
         NumParams
     };
 
@@ -64,7 +74,12 @@ public:
     void noteOn (int note, int velocity) override;
     void noteOff (int note) override;
     void pitchBend (int v14) override { bend = (v14 - 8192) / 8192.0; }
-    void controller (int cc, int value) override { if (cc == 120 || cc == 123) allNotesOff (cc == 120); (void) value; }
+    void controller (int cc, int value) override
+    {
+        if (cc == 120 || cc == 123) allNotesOff (cc == 120);
+        if (cc == 1) modWheel = value / 127.0;
+    }
+    void channelPressure (int v) override { aftertouch = v / 127.0; }
     void allNotesOff (bool hard) override;
     void setTempo (double b) override { bpm = b > 0 ? b : 120.0; }
     void setGlobal (const GlobalVoiceSettings* g) override { global = g; }
@@ -79,6 +94,10 @@ public:
     static std::array<float, kNumParams> initParams();
     static void extractEnvelopes (const std::array<float, kNumParams>&, AdsrTimes& amp, AdsrTimes& filter);
 
+    /** Converts the 244 values of a Sylenth1 preset (Sylenth's VST parameter order, as stored in .fxb/.fxp banks)
+        to this engine's parameters, the amp/mod envelope times and the preset's arpeggiator steps. */
+    static std::array<float, kNumParams> fromSylenthPreset (const std::vector<float>& raw, PatchSteps* steps = nullptr);
+
     static int listValue (float v, int count) { return std::clamp ((int) (v * (count - 1) + 0.5f), 0, count - 1); }
 
 private:
@@ -91,7 +110,7 @@ private:
         double curNote = 60, targetNote = 60;
         std::array<Osc, 4> osc;
         std::array<Env, 4> env;       // amp A, amp B, mod 1, mod 2
-        std::array<double, 2> lfoPhase {}, lfoVal {}, lfoSh {};
+        std::array<double, 2> lfoPhase {}, lfoVal {}, lfoSh {}, lfoRateMod {}, lfoGainMod {};
         dsp::Svf fA[2][2], fB[2][2];  // [stage][channel]
         GlobalVoiceStage gstage;
         int ctl = 0;
@@ -106,7 +125,9 @@ private:
     std::array<float, kNumParams> params {};
     std::array<Voice, kMaxVoices> voices;
     std::vector<double> bufL, bufR;
-    double sr = 44100, bpm = 120, bend = 0;
+    double sr = 44100, bpm = 120, bend = 0, modWheel = 0, aftertouch = 0;
+    std::array<double, 2> freeLfoPhase {};
+    std::array<double, 3> lorenz { 0.1, 0.0, 0.0 };
     const GlobalVoiceSettings* global = nullptr;
     uint64_t ageCounter = 0;
     std::vector<int> held;

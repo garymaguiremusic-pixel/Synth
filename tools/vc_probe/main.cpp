@@ -131,6 +131,7 @@ static int probeVst3 (const File& path, const File& out)
     VST3PluginFormat vst3;
     vst3.findAllTypesForFile (found, path.getFullPathName());
     if (found.isEmpty()) { std::printf ("no VST3 plugin in %s\n", path.getFullPathName().toRawUTF8()); return 1; }
+    std::printf ("opening %s\n", found[0]->name.toRawUTF8()); std::fflush (stdout);
     String err;
     auto inst = fm.createPluginInstance (*found[0], 44100.0, 512, err);
     if (! inst) { std::printf ("could not open: %s\n", err.toRawUTF8()); return 1; }
@@ -141,6 +142,7 @@ static int probeVst3 (const File& path, const File& out)
     for (int i = 0; i < params.size(); ++i)
     {
         auto* p = params[i];
+        if (i % 100 == 0) { std::printf ("  parameter %d of %d\n", i, params.size()); std::fflush (stdout); }
         String id;
         if (auto* hp = dynamic_cast<HostedAudioProcessorParameter*> (p)) id = hp->getParameterID();
         const float orig = p->getValue();
@@ -152,7 +154,19 @@ static int probeVst3 (const File& path, const File& out)
             const float v = (float) k / 16.0f;
             j << (k ? ", " : "") << "\"" << String (v, 4) << "\": \"" << jsonEscape (p->getText (v, 64)) << "\"";
         }
-        j << "} }" << (i + 1 < params.size() ? "," : "") << "\n";
+        // every step of 1/999 (Spire stores list entries as index / 999): only where the text changes
+        j << "}, \"changes\": [";
+        String last;
+        bool first = true;
+        for (int k = 0; k <= 999; ++k)
+        {
+            const String t = p->getText ((float) k / 999.0f, 64);
+            if (k > 0 && t == last) continue;
+            j << (first ? "" : ", ") << "[" << k << ", \"" << jsonEscape (t) << "\"]";
+            first = false;
+            last = t;
+        }
+        j << "] }" << (i + 1 < params.size() ? "," : "") << "\n";
     }
     j << "  ]\n}\n";
     out.replaceWithText (j);
@@ -165,7 +179,8 @@ int main (int argc, char** argv)
     ScopedJuceInitialiser_GUI init;
     if (argc < 3)
     {
-        std::puts ("usage:\n  vc_probe sylenth <Sylenth1.dll> [bank.fxb]\n  vc_probe spire <Spire.vst3>");
+        std::puts ("usage:\n  vc_probe sylenth <Sylenth1.dll> [bank.fxb]\n  vc_probe spire <Spire.vst3>\n"
+                   "  vc_probe virus <Osirus.vst3>\n  vc_probe vcclone <VC-Clone.vst3>");
         return 2;
     }
     const String what (argv[1]);
@@ -173,6 +188,8 @@ int main (int argc, char** argv)
     const File cwd = File::getCurrentWorkingDirectory();
     if (what == "sylenth") return probeSylenth (plugin, argc > 3 ? File (String::fromUTF8 (argv[3])) : File(), cwd.getChildFile ("sylenth_params.json"));
     if (what == "spire") return probeVst3 (plugin, cwd.getChildFile ("spire_params.json"));
-    std::puts ("first argument: sylenth or spire");
+    if (what == "virus") return probeVst3 (plugin, cwd.getChildFile ("virus_params.json"));        // Osirus (or any Virus VST3)
+    if (what == "vcclone") return probeVst3 (plugin, cwd.getChildFile ("vcclone_params.json"));    // our own plugin, for a cross-check
+    std::puts ("first argument: sylenth, spire, virus or vcclone");
     return 2;
 }

@@ -5,6 +5,10 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <catch2/catch_approx.hpp>
+using Catch::Approx;
 
 using namespace vc;
 
@@ -139,4 +143,92 @@ TEST_CASE ("user preset files (optional: VC_TEST_PRESETS=folder)")
     REQUIRE (sp.patches.size() == 1);
     REQUIRE (sp.patches[0].name == "LD_2000");
     REQUIRE (sp.patches[0].spire.size() == 721);
+}
+
+TEST_CASE ("Sylenth presets map onto the Sylenth engine", "[modes][sylenth]")
+{
+    using namespace vc::sylenth;
+    // a synthetic preset in Sylenth's VST parameter order (244 values)
+    std::vector<float> raw (244, 0.0f);
+    raw[0] = 0.0f; raw[1] = 0.3f; raw[2] = 0.2f; raw[3] = 0.8f;          // amp env A: A D R S
+    raw[46] = 1.0f / 3.0f;                                                // filter A: lowpass
+    raw[47] = 1.0f;                                                       // 12 dB
+    raw[42] = 0.6f;
+    raw[54] = 0.5f;
+    raw[90] = 3.0f / 8.0f;                                                // osc A1: 3 voices
+    raw[92] = 1.0f / 7.0f;                                                // saw
+    raw[85] = 4.0f / 6.0f;                                                // octave +1
+    raw[69] = 1.0f; raw[68] = 0.5f; raw[91] = 1.0f;                       // mix A, main volume, osc A1 volume
+    raw[225] = 15.0f / 32.0f; raw[197] = 1.0f;                            // mod env 1 -> Cutoff AB, +10
+    raw[207] = 1.0f / 11.0f; raw[233] = 3.0f / 32.0f; raw[205] = 0.75f;   // misc 1A: velocity -> Volume AB
+    raw[217] = 1.0f; raw[9] = 8.0f / 9.0f; raw[13] = 8.0f / 16.0f;        // arp on, Step mode, 8 steps
+    raw[165] = 36.0f / 48.0f; raw[181] = 0.5f; raw[149] = 1.0f;           // step 1: +12, vel 64, hold
+    vc::PatchSteps st;
+    const auto a = vc::SylenthEngine::fromSylenthPreset (raw, &st);
+    CHECK (vc::SylenthEngine::listValue (a[OscBase + oVoices], 9) == 3);
+    CHECK (vc::SylenthEngine::listValue (a[OscBase + oWave], 8) == 1);
+    CHECK (vc::SylenthEngine::listValue (a[OscBase + oOctave], 7) == 4);
+    CHECK (vc::SylenthEngine::listValue (a[FiltA], 4) == 1);
+    CHECK (vc::SylenthEngine::listValue (a[FiltA + 1], 2) == 0);         // 12 dB
+    CHECK (a[AmpA + 2] == Approx (0.8f));                                 // sustain moved to engine's S slot
+    CHECK (a[AmpA + 3] == Approx (0.2f));
+    CHECK (vc::SylenthEngine::listValue (a[Mod1 + 4], DNumDests) == DCutoffAB);
+    CHECK (vc::SylenthEngine::listValue (a[Misc], SNumSources) == SVelocity);
+    CHECK (vc::SylenthEngine::listValue (a[Misc + 1], DNumDests) == DVolumeAB);
+    CHECK (st.arpOn);
+    CHECK (st.mode == 8);
+    CHECK (st.length == 8);
+    REQUIRE (st.steps.size() == 16);
+    CHECK (st.steps[0].transpose == 12);
+    CHECK (st.steps[0].velocity == 64);
+    CHECK (st.steps[0].tie);
+
+    vc::SylenthEngine e;
+    e.prepare (44100, 512);
+    e.setAllParams (a);
+    e.noteOn (57, 100);
+    std::vector<float> L (512), R (512);
+    double peak = 0;
+    for (int b = 0; b < 40; ++b)
+    {
+        e.process (L.data(), R.data(), 512);
+        for (int i = 0; i < 512; ++i) { REQUIRE (std::isfinite (L[(size_t) i])); peak = std::max (peak, (double) std::abs (L[(size_t) i])); }
+    }
+    CHECK (peak > 0.01);
+}
+
+TEST_CASE ("The user's Sylenth bank plays", "[modes][sylenth][user]")
+{
+    const char* dir = std::getenv ("VC_TEST_PRESETS");
+    if (! dir) return;
+    std::ifstream f (std::string (dir) + "/Factorybank1.fxb", std::ios::binary);
+    if (! f) return;
+    std::vector<uint8_t> data ((std::istreambuf_iterator<char> (f)), {});
+    const auto patches = vc::importAnyData (data.data(), data.size(), "Factorybank1.fxb").patches;
+    REQUIRE (patches.size() > 100);
+    int sounding = 0, total = 0;
+    for (auto& p : patches)
+    {
+        vc::SylenthEngine e;
+        e.prepare (44100, 512);
+        e.setAllParams (vc::SylenthEngine::fromSylenthPreset (p.sylenth.values));
+        e.noteOn (60, 100);
+        std::vector<float> L (512), R (512);
+        double peak = 0;
+        for (int b = 0; b < 60; ++b)
+        {
+            if (b == 40) e.noteOff (60);
+            e.process (L.data(), R.data(), 512);
+            for (int i = 0; i < 512; ++i)
+            {
+                REQUIRE (std::isfinite (L[(size_t) i]));
+                peak = std::max (peak, (double) std::abs (L[(size_t) i]));
+            }
+        }
+        ++total;
+        sounding += peak > 1e-3 ? 1 : 0;
+        CHECK (peak < 8.0);
+    }
+    WARN ("Sylenth bank: " << sounding << " of " << total << " presets sound");
+    CHECK (sounding > total * 9 / 10);
 }

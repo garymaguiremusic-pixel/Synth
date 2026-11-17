@@ -269,7 +269,8 @@ void VCClonePanel::buildSylenth()
                       { b + oPan, "Pan" }, { b + oPhase, "Phase" }, { b + oRetrig, "Retrig" }, { b + oInvert, "Invert" },
                       { b + oKeytrack, "Keytrack" } });
     };
-    auto filt = [&] (int b) { return syl ({ { b, "Type" }, { b + 1, "Slope" }, { b + 2, "Cutoff" }, { b + 3, "Reso" }, { b + 4, "Drive" }, { b + 5, "Keytrack" } }); };
+    auto filt = [&] (int b) { return syl ({ { b, "Type" }, { b + 1, "Slope" }, { b + 2, "Cutoff" }, { b + 3, "Reso" }, { b + 4, "Drive" },
+                                             { b == FiltA ? FiltAInput : FiltBInput, "Input" } }); };
     const int part = addGroup (PageSynth, M, 0, { "A", "B" });
     addPanel ("Part A - Oscillator 1", PageSynth, M, 0, osc (0), part, 0);
     addPanel ("Part B - Oscillator 1", PageSynth, M, 0, osc (2), part, 1);
@@ -284,7 +285,8 @@ void VCClonePanel::buildSylenth()
                                                           { Polyphony, "Polyphony" }, { BendRange, "Bend" }, { MainVol, "Volume" } }));
     auto modEnv = [&] (int b) { return syl ({ { b, "Attack" }, { b + 1, "Decay" }, { b + 2, "Sustain" }, { b + 3, "Release" },
                                                { b + 4, "Dest 1" }, { b + 5, "Amt 1" }, { b + 6, "Dest 2" }, { b + 7, "Amt 2" } }); };
-    auto lfo = [&] (int b) { return syl ({ { b, "Wave" }, { b + 1, "Rate" }, { b + 2, "Sync" }, { b + 3, "Gain" }, { b + 4, "Offset" },
+    auto lfo = [&] (int b) { return syl ({ { b, "Wave" }, { b + 1, "Rate" }, { b + 2, "Sync" }, { b == Lfo1 ? Lfo1Free : Lfo2Free, "Free" },
+                                            { b + 3, "Gain" }, { b + 4, "Offset" },
                                             { b + 5, "Dest 1" }, { b + 6, "Amt 1" }, { b + 7, "Dest 2" }, { b + 8, "Amt 2" } }); };
     addPanel ("Mod Env 1", PageMod, M, 0, modEnv (Mod1));
     addPanel ("Mod Env 2", PageMod, M, 1, modEnv (Mod2));
@@ -292,6 +294,13 @@ void VCClonePanel::buildSylenth()
     addPanel ("LFO 2", PageMod, M, 3, lfo (Lfo2));
     addPanel ("Patch Amp Env A", PageMod, M, 0, syl ({ { AmpA, "Attack" }, { AmpA + 1, "Decay" }, { AmpA + 2, "Sustain" }, { AmpA + 3, "Release" } }));
     addPanel ("Patch Amp Env B", PageMod, M, 1, syl ({ { AmpB, "Attack" }, { AmpB + 1, "Decay" }, { AmpB + 2, "Sustain" }, { AmpB + 3, "Release" } }));
+    // the four misc modulation slots on the Matrix page
+    const char* miscNames[] = { "Misc 1A", "Misc 1B", "Misc 2A", "Misc 2B" };
+    for (int m = 0; m < 4; ++m)
+    {
+        const int b = Misc + m * 5;
+        addPanel (miscNames[m], PageMatrix, M, m, syl ({ { b, "Source" }, { b + 1, "Dest 1" }, { b + 2, "Amt 1" }, { b + 3, "Dest 2" }, { b + 4, "Amt 2" } }));
+    }
 }
 
 void VCClonePanel::buildSpire()

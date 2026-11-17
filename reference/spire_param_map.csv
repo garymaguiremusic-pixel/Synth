@@ -1,4 +1,4 @@
-﻿index,key,discrete_1000,init_value,init_as_int
+index,key,discrete_1000,init_value,init_as_int
 0,mode,yes,0.004004,4
 1,poly,yes,0.003003,3
 2,bend_up,yes,0.002002,2
@@ -243,11 +243,11 @@
 241,shp_mode,,0.001001,1
 242,shp_band,,0,0
 243,shp_drive,,0,0
-244,shp_bit(inferred),,1,999
+244,shp_bit,,1,999
 245,shp_sr,,1,999
 246,shp_hicut,,1,999
 247,shp_lowcut,,0,0
-248,shp_drywet(inferred),,0,0
+248,shp_wet,,0,0
 249,shp_hq,,1,999
 250,phs_stages,yes,0.003003,3
 251,phs_freq,,0,0
@@ -255,7 +255,7 @@
 253,phs_spread,,0.5,500
 254,phs_rate,,0.1,100
 255,phs_depth,,0.9,899
-256,phs_drywet(inferred),,0,0
+256,phs_wet,,0,0
 257,phs_pre,,0,0
 258,chr_delay,,0.5,500
 259,chr_mode,yes,0.00600601,6
@@ -265,7 +265,7 @@
 263,chr_wide,,1,999
 264,chr_hicut,,1,999
 265,chr_lowcut,,0.35,350
-266,chr_drywet(inferred),,0,0
+266,chr_wet,,0,0
 267,del_timeL,,0.4,400
 268,del_timeR,,0.5,500
 269,del_stimeL,yes,0.00700701,7
@@ -277,7 +277,7 @@
 275,del_wide,,0,0
 276,del_modulate,,0.05,50
 277,del_color,,0.5,500
-278,del_drywet(inferred),,0,0
+278,del_wet,,0,0
 279,rev_mode,yes,0,0
 280,rev_sync,,0,0
 281,rev_pretime,,0,0
@@ -286,7 +286,7 @@
 284,rev_wide,,1,999
 285,rev_decay,,0.635742,635
 286,rev_color,,0.65,649
-287,rev_drywet(inferred),,0,0
+287,rev_wet,,0,0
 288,slot1_Src1,yes,0.017017,17
 289,slot1_Src2,yes,0,0
 290,slot1_Amt1,,0.5,500
@@ -631,7 +631,7 @@
 629,stp2_start,yes,0,0
 630,stp2_stop,yes,0.015015,15
 631,stp2_mono,,0,0
-632,stp2_rtrg(inferred),,1,999
+632,stp2_rtrg,,1,999
 633,stp2_loop,,1,999
 634,stp2_hold1,,0,0
 635,stp2_hold2,,0,0
