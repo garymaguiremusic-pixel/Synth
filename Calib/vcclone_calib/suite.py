@@ -176,7 +176,23 @@ def run_tests(tests: list[Test], ref: Renderer, ours: Renderer, out_dir: str, ca
     results = []
     stft_floor = stft_floor or {}
     t0 = time.time()
+    # checkpoint: rows already measured in this run folder are reused (a restart resumes)
+    partial_path = os.path.join(out_dir, 'partial.json')
+    done = {}
+    if os.path.exists(partial_path):
+        try:
+            done = {r['id']: r for r in json.load(open(partial_path))}
+        except (OSError, ValueError):
+            done = {}
     for i, t in enumerate(tests):
+        if t.id in done:
+            results.append(done[t.id])
+            continue
+        if i % 25 == 0 and results:
+            os.makedirs(out_dir, exist_ok=True)
+            with open(partial_path + '.tmp', 'w') as f:
+                json.dump(_clean(results), f)
+            os.replace(partial_path + '.tmp', partial_path)
         row = {'id': t.id, 'block': t.block, 'metric': t.metric, 'info': t.info}
         try:
             sr = t.job.sr
@@ -300,6 +316,22 @@ def regressions(results, baseline_path):
         return []
     base = {r['id']: r for r in json.load(open(baseline_path))['results']}
     return [r['id'] for r in results if base.get(r['id'], {}).get('pass') and not r.get('pass')]
+
+
+def _clean(o):
+    if isinstance(o, float) and not math.isfinite(o):
+        return None
+    if isinstance(o, dict):
+        return {k: _clean(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_clean(v) for v in o]
+    if isinstance(o, (np.floating,)):
+        return _clean(float(o))
+    if isinstance(o, (np.integer,)):
+        return int(o)
+    if isinstance(o, np.bool_):
+        return bool(o)
+    return o
 
 
 def save_run(out_dir, results, meta):

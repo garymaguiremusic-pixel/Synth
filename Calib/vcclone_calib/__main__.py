@@ -79,7 +79,7 @@ def cmd_suite(cfg, args):
     ref, ours = make_renderers(cfg)
     cache = Cache(cfg['cache_dir'])
     tests = collect_tests(cfg, args)
-    stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    stamp = args.resume or datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     out_dir = os.path.join(cfg['results_dir'], stamp)
     floor_path = os.path.join(cfg['results_dir'], 'noise_floor.json')
     floor = json.load(open(floor_path)) if os.path.exists(floor_path) else {}
@@ -170,6 +170,7 @@ def main(argv=None):
     s.add_argument('--patches', action='store_true', help='also A/B the user patch files from the config')
     s.add_argument('--limit', type=int, default=0, help='max patches per file')
     s.add_argument('--save-audio', default='patches', choices=['all', 'patches', 'none'])
+    s.add_argument('--resume', default='', help='run folder name to continue (results/<name>); measured tests are reused')
     n = sub.add_parser('noise-floor')
     n.add_argument('--full', action='store_true')
     n.add_argument('--patches', action='store_true', default=True)
