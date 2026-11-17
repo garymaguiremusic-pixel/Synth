@@ -124,9 +124,16 @@ if(VCCLONE_BUILD_PLUGIN)
         Plugin/PluginProcessor.cpp
         Plugin/PluginEditor.cpp
         Plugin/CustomLookAndFeel.cpp
-        Plugin/UI/VirusComponents.cpp)
+        Plugin/UI/VirusComponents.cpp
+        Plugin/VendorDelay.cpp
+        Plugin/VendorReverb.cpp)
 
     target_include_directories(VCClone PRIVATE Plugin)
+
+    # Gary's Virus Delay and LeadVerb plugins as the global FX (see ThirdParty/README.md)
+    include(cmake/vendor.cmake)
+    vc_add_vendor(VCClone ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/VirusDelay vd ${VC_VD_RENAMES})
+    vc_add_vendor(VCClone ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/LeadVerb lv ${VC_LV_RENAMES})
 
     target_compile_definitions(VCClone PUBLIC
         JUCE_WEB_BROWSER=0
@@ -156,7 +163,9 @@ if(VCCLONE_BUILD_PLUGIN AND VCCLONE_BUILD_SNAPSHOT)
         Plugin/PluginProcessor.cpp
         Plugin/PluginEditor.cpp
         Plugin/CustomLookAndFeel.cpp
-        Plugin/UI/VirusComponents.cpp)
+        Plugin/UI/VirusComponents.cpp
+        Plugin/VendorDelay.cpp
+        Plugin/VendorReverb.cpp)
     target_include_directories(vc_ui_snapshot PRIVATE Plugin)
     target_compile_definitions(vc_ui_snapshot PRIVATE
         JucePlugin_Name="VC-Clone" JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_STANDALONE_APPLICATION=1 JUCE_MODAL_LOOPS_PERMITTED=1)
