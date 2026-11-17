@@ -4,16 +4,17 @@
 #include "PluginProcessor.h"
 #include "CustomLookAndFeel.h"
 #include "UI/VirusComponents.h"
+#include "UI/ParamAdapters.h"
 
 //==============================================================================
-/** The whole user interface, laid out at its base size. The editor scales it. */
+/** The whole user interface at its base size (1000 x 580); the editor scales it. */
 class VCClonePanel : public juce::Component,
                      public juce::FileDragAndDropTarget,
                      private juce::Timer,
                      private juce::ListBoxModel
 {
 public:
-    static constexpr int kBaseWidth = 1000, kBaseHeight = 660;
+    static constexpr int kBaseWidth = 1000, kBaseHeight = 580;
 
     explicit VCClonePanel (VCCloneAudioProcessor&);
     ~VCClonePanel() override;
@@ -24,40 +25,62 @@ public:
     bool isInterestedInFileDrag (const juce::StringArray&) override;
     void filesDropped (const juce::StringArray&, int, int) override;
 
-    enum class Preview { None, Osc1, Osc2, FiltEnv, AmpEnv, Lfo1, Lfo2, Lfo3 };
+    enum Page { PageSynth, PageMod, PageMatrix, PageArp, PageFx, PageBrowser, NumPages };
 
 private:
-    struct Item
+    // a control bound to an adapter
+    struct Control
     {
-        int offset = -1;
-        enum class Kind { Knob, Combo, Toggle, Preview } kind = Kind::Knob;
+        std::unique_ptr<ParamAdapter> adapter;
+        std::unique_ptr<juce::Component> comp;
+        std::unique_ptr<juce::Label> label;      // dropdown caption
+        enum class Kind { Knob, Combo, Toggle } kind = Kind::Knob;
         int cells = 1;
-        juce::Component* comp = nullptr;
+        int shown = INT_MIN;
     };
     struct Panel
     {
         juce::String title;
-        int tab = 0, cols = 1;
-        std::vector<Item> items;
+        int page = PageSynth, mode = -1;          // mode -1 = every mode
+        int row = 0, group = -1, groupIndex = 0;
+        int cols = 1;
+        std::vector<Control*> controls;
         juce::Rectangle<float> bounds;
+        bool strip = false;                       // the global strip under the synth pages
+    };
+    struct Group
+    {
+        int page = 0, mode = -1, row = 0, selected = 0;
+        juce::StringArray labels;
+        std::vector<std::unique_ptr<juce::TextButton>> buttons;
+        juce::Rectangle<int> area;
     };
 
     void timerCallback() override;
-    void buildPanels();
-    void addPanel (int tab, const juce::String& title, std::vector<int> offsets, int cols, Preview preview = Preview::None);
-    void layoutPanels();
-    void showTab (int);
+    Control* makeControl (std::unique_ptr<ParamAdapter>);
+    Panel& addPanel (juce::String title, int page, int mode, int row, std::vector<std::unique_ptr<ParamAdapter>> adapters,
+                     int group = -1, int groupIndex = 0);
+    int addGroup (int page, int mode, int row, juce::StringArray labels);
+    std::unique_ptr<ParamAdapter> host (const char* id, juce::String label = {});
+    std::unique_ptr<ParamAdapter> virus (int offset, juce::String label = {});
+    void buildVirus();
+    void buildSylenth();
+    void buildSpire();
+    void buildGlobal();
+    void layoutAll();
+    void updateVisibility();
+    void showPage (int);
+    bool panelVisible (const Panel&) const;
+    int currentMode() const;
     void createBackground();
     void drawWordmark (juce::Graphics&, juce::Rectangle<float>);
     void refreshPresetList();
     void openLoadDialog();
     void openExportMenu();
     void loadFile (const juce::File&);
-    void touched (int offset);
-    float previewValue (Preview, float x) const;
     juce::String buildInfoText() const;
+    void layoutEmbedded();
 
-    // ListBoxModel (browser)
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
     void listBoxItemClicked (int row, const juce::MouseEvent&) override;
@@ -66,37 +89,30 @@ private:
     CustomLookAndFeel lnf;
     juce::Image background;
 
-    static constexpr int kNumTabs = 7;
-    std::array<juce::TextButton, kNumTabs> tabs;
-    int currentTab = 0;
-
+    std::array<juce::TextButton, 3> modeButtons;
+    std::array<juce::TextButton, NumPages> tabs;
+    int currentPage = PageSynth;
     juce::TextButton loadButton { "Load" }, exportButton { "Export" }, initButton { "Init" }, prevButton { "<" }, nextButton { ">" };
     juce::ComboBox presetBox;
 
+    std::vector<std::unique_ptr<Control>> controls;
     std::vector<Panel> panels;
-    std::vector<std::unique_ptr<VirusKnob>> knobs;
-    std::vector<std::unique_ptr<VirusCombo>> combos;
-    std::vector<std::unique_ptr<juce::TextButton>> toggles;
-    std::vector<std::unique_ptr<CurvePreview>> previews;
-    std::vector<std::unique_ptr<juce::Label>> comboLabels;
-    std::vector<std::unique_ptr<KnobAttachment>> knobAttachments;
-    std::vector<std::unique_ptr<ComboAttachment>> comboAttachments;
-    std::vector<std::unique_ptr<ToggleAttachment>> toggleAttachments;
-    std::vector<std::pair<CurvePreview*, Preview>> previewKinds;
+    std::vector<std::unique_ptr<Group>> groups;
 
-    // browser tab
+    // embedded panels from Gary's plugins
+    std::unique_ptr<juce::Component> delayPanel, reverbPanel, melodyPanel, stepGrid;
+    juce::Rectangle<float> delayArea, reverbArea, melodyArea, gridArea;
+
     juce::ListBox patchList { "patches", this };
     juce::TextEditor infoText;
-
     LcdDisplay lcd, statusLcd;
     HelpButton helpButton;
     HelpOverlay helpOverlay;
     juce::TooltipWindow tooltipWindow { this, 500 };
     std::unique_ptr<juce::FileChooser> chooser;
 
-    std::array<int, 256> shownValues {};
-    int lcdOffset = -1;
-    int lastBankVersion = -1;
+    juce::String lcdName, lcdValue;
+    int lastBankVersion = -1, lastMode = -1, lastArpMode = -1;
     juce::String statusMessage;
     double statusUntil = 0.0;
 
@@ -104,7 +120,6 @@ private:
 };
 
 //==============================================================================
-/** Resizable editor (fixed aspect ratio, 70 % .. 250 %); remembers its size. */
 class VCCloneAudioProcessorEditor : public juce::AudioProcessorEditor
 {
 public:

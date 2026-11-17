@@ -1,40 +1,56 @@
-// Developer tool: renders every tab of the editor to PNG (for checking the GUI without a host).
-// usage: vc_ui_snapshot <outDir> [bank.mid] [scale]
+// Developer tool: renders every tab of the editor, in every synth mode, to PNG.
+// usage: vc_ui_snapshot <outDir> [presetFile] [scale]
 #include "PluginProcessor.h"
 #include <juce_gui_basics/juce_gui_basics.h>
+
+static juce::TextButton* findButton (juce::Component* root, const juce::String& text)
+{
+    for (auto* c : root->getChildren())
+        if (auto* b = dynamic_cast<juce::TextButton*> (c))
+            if (b->getButtonText() == text) return b;
+    return nullptr;
+}
 
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
-    if (argc < 2) { std::puts ("usage: vc_ui_snapshot <outDir> [bank.mid] [scale]"); return 2; }
+    if (argc < 2) { std::puts ("usage: vc_ui_snapshot <outDir> [presetFile] [scale]"); return 2; }
     const juce::File outDir (juce::File::getCurrentWorkingDirectory().getChildFile (argv[1]));
     outDir.createDirectory();
     const float scale = argc > 3 ? (float) std::atof (argv[3]) : 1.0f;
 
     auto proc = std::make_unique<VCCloneAudioProcessor>();
+    proc->setRateAndBufferSizeDetails (48000.0, 512);
+    proc->prepareToPlay (48000.0, 512);
     if (argc > 2 && juce::String (argv[2]).isNotEmpty())
         std::printf ("load: %s\n", proc->loadBankFile (juce::File (juce::String (argv[2]))).toRawUTF8());
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc->createEditor());
     ed->setSize ((int) (ed->getWidth() * scale), (int) (ed->getHeight() * scale));
-
     auto* panel = ed->getChildComponent (0);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
-    int index = 0;
-    for (auto* c : panel->getChildren())
-        if (auto* b = dynamic_cast<juce::TextButton*> (c))
+    auto pump = [] (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); };
+    pump (200);
+
+    const juce::StringArray modes { "VIRUS", "SYLENTH", "SPIRE" }, pages { "Synth", "Mod", "Matrix", "Arp", "FX", "Browser" };
+    for (int m = 0; m < modes.size(); ++m)
+    {
+        if (argc > 2 && m != (int) proc->getMode()) continue;     // with a preset: only its mode
+        proc->setMode ((juce::String (argv[argc > 2 ? 0 : 0]).isEmpty() ? vc::SynthMode::Virus : (vc::SynthMode) m));
+        if (argc <= 2) proc->setMode ((vc::SynthMode) m);
+        pump (150);
+        for (auto& page : pages)
         {
-            const auto name = b->getButtonText();
-            if (! juce::StringArray { "Oscillators", "Filters", "LFOs", "Modulation", "Common", "Effects", "Browser" }.contains (name)) continue;
-            if (b->onClick) b->onClick();
-            juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+            if (auto* b = findButton (panel, page); b && b->onClick) b->onClick();
+            if (page == "Arp")
+                if (auto* prm = proc->apvts.getParameter (gid::arpMode)) prm->setValueNotifyingHost (prm->convertTo0to1 (2.0f));
+            pump (150);
             auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
-            juce::PNGImageFormat png;
-            auto f = outDir.getChildFile (juce::String (index++) + "_" + name + ".png");
+            auto f = outDir.getChildFile (modes[m] + "_" + page + ".png");
             f.deleteFile();
             juce::FileOutputStream os (f);
-            png.writeImageToStream (img, os);
+            juce::PNGImageFormat().writeImageToStream (img, os);
             std::printf ("wrote %s\n", f.getFullPathName().toRawUTF8());
         }
+    }
     ed.reset();
     return 0;
 }

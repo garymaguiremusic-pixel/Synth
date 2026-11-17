@@ -149,32 +149,39 @@ if(VCCLONE_BUILD_PLUGIN)
         VST3_AUTO_MANIFEST          ${VCCLONE_VST3_MANIFEST}
         COPY_PLUGIN_AFTER_BUILD     ${VCCLONE_COPY_AFTER_BUILD})
 
-    target_sources(VCClone PRIVATE
+    set(VCCLONE_PLUGIN_SOURCES
         Plugin/PluginProcessor.cpp
         Plugin/PluginEditor.cpp
         Plugin/CustomLookAndFeel.cpp
         Plugin/UI/VirusComponents.cpp
+        Plugin/UI/ParamAdapters.cpp
         Plugin/VendorDelay.cpp
         Plugin/VendorReverb.cpp
         Plugin/VendorMelody.cpp
         Plugin/VendorStepSeq.cpp)
+    target_sources(VCClone PRIVATE ${VCCLONE_PLUGIN_SOURCES})
 
     target_include_directories(VCClone PRIVATE Plugin)
 
     # Gary's Virus Delay and LeadVerb plugins as the global FX (see ThirdParty/README.md)
     include(cmake/vendor.cmake)
-    vc_add_vendor(VCClone ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/VirusDelay vd ${VC_VD_RENAMES})
-    vc_add_vendor(VCClone ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/LeadVerb lv ${VC_LV_RENAMES})
-    vc_add_vendor(VCClone ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/MelodyMagic mm ${VC_MM_RENAMES})
-    vc_add_vendor(VCClone ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/ArpSampler as ${VC_AS_RENAMES})
-    target_include_directories(VCClone PRIVATE ThirdParty/MelodyMagic/core/include)
-    # MelodyMagic is C++17 code: keep u8string() returning std::string in its files
-    file(GLOB_RECURSE VC_MM_SOURCES CONFIGURE_DEPENDS ThirdParty/MelodyMagic/*.cpp)
-    if(MSVC)
-        set_source_files_properties(${VC_MM_SOURCES} PROPERTIES COMPILE_OPTIONS "/Zc:char8_t-")
-    else()
-        set_source_files_properties(${VC_MM_SOURCES} PROPERTIES COMPILE_OPTIONS "-fno-char8_t")
-    endif()
+    # Gary's plugins as the global FX and arp sections (see ThirdParty/README.md)
+    include(cmake/vendor.cmake)
+    function(vc_add_all_vendors target)
+        vc_add_vendor(${target} ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/VirusDelay vd ${VC_VD_RENAMES})
+        vc_add_vendor(${target} ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/LeadVerb lv ${VC_LV_RENAMES})
+        vc_add_vendor(${target} ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/MelodyMagic mm ${VC_MM_RENAMES})
+        vc_add_vendor(${target} ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/ArpSampler as ${VC_AS_RENAMES})
+        target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/MelodyMagic/core/include)
+        # MelodyMagic is C++17 code: keep u8string() returning std::string in its files
+        file(GLOB_RECURSE mm_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/MelodyMagic/*.cpp)
+        if(MSVC)
+            set_source_files_properties(${mm_sources} TARGET_DIRECTORY ${target} PROPERTIES COMPILE_OPTIONS "/Zc:char8_t-")
+        else()
+            set_source_files_properties(${mm_sources} TARGET_DIRECTORY ${target} PROPERTIES COMPILE_OPTIONS "-fno-char8_t")
+        endif()
+    endfunction()
+    vc_add_all_vendors(VCClone)
 
     target_compile_definitions(VCClone PUBLIC
         JUCE_WEB_BROWSER=0
@@ -199,16 +206,8 @@ endif()
 option(VCCLONE_BUILD_SNAPSHOT "Build the vc_ui_snapshot developer tool" OFF)
 if(VCCLONE_BUILD_PLUGIN AND VCCLONE_BUILD_SNAPSHOT)
     juce_add_console_app(vc_ui_snapshot PRODUCT_NAME "vc_ui_snapshot")
-    target_sources(vc_ui_snapshot PRIVATE
-        tools/ui_snapshot/main.cpp
-        Plugin/PluginProcessor.cpp
-        Plugin/PluginEditor.cpp
-        Plugin/CustomLookAndFeel.cpp
-        Plugin/UI/VirusComponents.cpp
-        Plugin/VendorDelay.cpp
-        Plugin/VendorReverb.cpp
-        Plugin/VendorMelody.cpp
-        Plugin/VendorStepSeq.cpp)
+    target_sources(vc_ui_snapshot PRIVATE tools/ui_snapshot/main.cpp ${VCCLONE_PLUGIN_SOURCES})
+    vc_add_all_vendors(vc_ui_snapshot)
     target_include_directories(vc_ui_snapshot PRIVATE Plugin)
     target_compile_definitions(vc_ui_snapshot PRIVATE
         JucePlugin_Name="VC-Clone" JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_STANDALONE_APPLICATION=1 JUCE_MODAL_LOOPS_PERMITTED=1)
