@@ -2,7 +2,7 @@ name: Build plugin
 
 on:
   push:
-    branches: [main]
+    branches: [main, modes]
   workflow_dispatch:
 
 permissions:
@@ -39,21 +39,23 @@ jobs:
       # The zipped plugin goes to a "builds" branch (fetched with git) instead of
       # Actions artifacts, so it never counts against the artifact storage quota.
       - name: Publish VST3 to builds branch
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/modes'
         shell: bash
         run: |
+          TARGET=builds
+          if [ "${GITHUB_REF}" = "refs/heads/modes" ]; then TARGET=builds-modes; fi
           mkdir out
           cd build/VCClone_artefacts/Release/VST3
           7z a -tzip "$GITHUB_WORKSPACE/out/VC-Clone-VST3-Windows-x64.zip" "VC-Clone.vst3"
           cd "$GITHUB_WORKSPACE"
           7z a -tzip "$GITHUB_WORKSPACE/out/vc_render-Windows-x64.zip" "./build/Release/vc_render.exe"
           cd "$GITHUB_WORKSPACE/out"
-          git init -q -b builds
+          git init -q -b "$TARGET"
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add .
           git commit -qm "Plugin builds ${GITHUB_SHA::7}"
-          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" builds
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" "$TARGET"
 
       - name: Upload logs on failure
         if: failure()

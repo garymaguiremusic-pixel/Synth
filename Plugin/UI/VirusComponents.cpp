@@ -276,15 +276,14 @@ void HelpOverlay::paint (Graphics& g)
 
     const char* lines[] =
     {
-        "LOAD: open a Virus A/B/C bank (.mid or .syx), or drag one onto the window. Access OS-update files are refused.",
-        "PRESET: choose a patch from the loaded bank (< > step through). INIT resets to a plain saw patch.",
-        "EXPORT: save the current patch (.syx / .mid) or the whole bank. Out-of-range bytes are written back unchanged.",
-        "TABS: Oscillators, Filters, Envelopes, LFOs, Modulation, Common, Effects, Browser (patch list, warnings).",
-        "KNOBS: whole steps of 1. Drag up/down (Shift = slower), mouse wheel = +/-1 per notch, double-click = default.",
-        "DROPDOWNS: click to choose, or use the mouse wheel to step one entry at a time.",
-        "Values are the raw Virus 0..127 bytes, so they match the Virus / Osirus displays one-to-one.",
-        "MIDI: notes, pitch bend, pressure, the Virus CC map, Virus SysEx single dumps and parameter changes.",
-        "Drag the bottom-right corner to resize (70 - 250 %). The size is remembered.",
+        "MODE: VIRUS / SYLENTH / SPIRE picks the synth. Each has its own oscillators and filters (SYNTH tab) and modulation (MOD).",
+        "GLOBAL (under SYNTH/MOD/MATRIX): Filter ADSR + Amp ADSR (Sync = note values at the host tempo; Global = use these",
+        "    instead of the patch's own envelopes) and the Global Filter (Virus filter types), shared by all three synths.",
+        "FX tab: Saturation (Virus curves), then your Virus Delay and LeadVerb, each with its own full panel and on/off switch.",
+        "ARP tab: Off, Arp (MelodyMagic) or Step Seq (ArpSampler). Patches with arp steps open them in the step sequencer.",
+        "LOAD / drag a file: Virus .mid/.syx, Sylenth .fxb/.fxp, Spire .spf2. The mode switches to match the patch.",
+        "KNOBS: whole steps of 1. Drag (Shift = slower), mouse wheel = +/-1 per notch, double-click = default.",
+        "DROPDOWNS: click, or use the mouse wheel to step one entry at a time. Drag the corner to resize (70 - 250 %).",
         "",
         "Click anywhere to close."
     };
