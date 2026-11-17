@@ -231,12 +231,84 @@ static int probeVst3Lists (const File& path, const File& out)
     return 0;
 }
 
+// For each list kind: move the knob to every displayed entry (k / 999), save the plugin's state and read back
+// the number the state stores for that knob. Gives "stored value -> name" for preset files. About a minute.
+static int probeSpireMap (const File& path, const File& out)
+{
+    AudioPluginFormatManager fm;
+    fm.addFormat (new VST3PluginFormat());
+    OwnedArray<PluginDescription> found;
+    VST3PluginFormat vst3;
+    vst3.findAllTypesForFile (found, path.getFullPathName());
+    if (found.isEmpty()) { std::printf ("no VST3 plugin in %s\n", path.getFullPathName().toRawUTF8()); return 1; }
+    std::printf ("opening %s\n", found[0]->name.toRawUTF8()); std::fflush (stdout);
+    String err;
+    auto inst = fm.createPluginInstance (*found[0], 44100.0, 512, err);
+    if (! inst) { std::printf ("could not open: %s\n", err.toRawUTF8()); return 1; }
+    auto& params = inst->getParameters();
+    auto find = [&] (const String& n) -> int { for (int i = 0; i < params.size(); ++i) if (params[i]->getName (64) == n) return i; return -1; };
+    // the stored value of parameter 'index' in the state's "params" array (JSON strings in parameter order)
+    auto stored = [&] (int index) -> String
+    {
+        MemoryBlock mb;
+        inst->getStateInformation (mb);
+        const String text = mb.toString();
+        const int start = text.indexOf ("\"params\"");
+        if (start < 0) return "?";
+        int pos = text.indexOfChar (start, '[') + 1;
+        for (int i = 0; i < index && pos > 0; ++i)
+        {
+            const int q1 = text.indexOfChar (pos, '"'), q2 = text.indexOfChar (q1 + 1, '"');
+            if (q1 < 0 || q2 < 0) return "?";
+            pos = q2 + 1;
+        }
+        const int q1 = text.indexOfChar (pos, '"'), q2 = text.indexOfChar (q1 + 1, '"');
+        return q1 >= 0 && q2 > q1 ? text.substring (q1 + 1, q2) : String ("?");
+    };
+    const char* kinds[] = { "env1_target1", "slot1_Src1", "osc1_wave", "lfo1_form", "osc1_type", "flt1_type", "flt1_mode",
+                            "osc1_uoct", "osc1_ucnt", "arp_speed", "arp_mode", "mode" };
+    String j;
+    j << "{\n  \"plugin\": \"" << jsonEscape (found[0]->name) << "\",\n  \"maps\": {\n";
+    bool firstKind = true;
+    for (auto* name : kinds)
+    {
+        const int idx = find (name);
+        if (idx < 0) continue;
+        auto* p = params[idx];
+        const float orig = p->getValue();
+        std::printf ("  %s\n", name); std::fflush (stdout);
+        j << (firstKind ? "" : ",\n") << "    \"" << name << "\": [";
+        firstKind = false;
+        String last;
+        bool first = true;
+        int same = 0;
+        for (int k = 0; k <= 999 && same < 40; ++k)
+        {
+            const float v = (float) k / 999.0f;
+            const String t = p->getText (v, 64);
+            if (k > 0 && t == last) { ++same; continue; }
+            same = 0;
+            last = t;
+            p->setValueNotifyingHost (v);
+            j << (first ? "" : ", ") << "[" << k << ", \"" << jsonEscape (stored (idx)) << "\", \"" << jsonEscape (t) << "\"]";
+            first = false;
+        }
+        p->setValueNotifyingHost (orig);
+        j << "]";
+    }
+    j << "\n  }\n}\n";
+    out.replaceWithText (j);
+    std::printf ("wrote %s\n", out.getFullPathName().toRawUTF8());
+    return 0;
+}
+
 int main (int argc, char** argv)
 {
     ScopedJuceInitialiser_GUI init;
     if (argc < 3)
     {
         std::puts ("usage:\n  vc_probe sylenth <Sylenth1.dll> [bank.fxb]\n  vc_probe spire <Spire.vst3>\n"
+                   "  vc_probe spiremap <Spire.vst3>     (about a minute: preset numbers of every list entry)\n"
                    "  vc_probe spirelists <Spire.vst3>   (fast: list entries only)\n  vc_probe virus <Osirus.vst3>\n  vc_probe vcclone <VC-Clone.vst3>");
         return 2;
     }
@@ -245,9 +317,10 @@ int main (int argc, char** argv)
     const File cwd = File::getCurrentWorkingDirectory();
     if (what == "sylenth") return probeSylenth (plugin, argc > 3 ? File (String::fromUTF8 (argv[3])) : File(), cwd.getChildFile ("sylenth_params.json"));
     if (what == "spire") return probeVst3 (plugin, cwd.getChildFile ("spire_params.json"));
+    if (what == "spiremap") return probeSpireMap (plugin, cwd.getChildFile ("spire_map.json"));
     if (what == "spirelists") return probeVst3Lists (plugin, cwd.getChildFile ("spire_lists.json"));
     if (what == "virus") return probeVst3 (plugin, cwd.getChildFile ("virus_params.json"));        // Osirus (or any Virus VST3)
     if (what == "vcclone") return probeVst3 (plugin, cwd.getChildFile ("vcclone_params.json"));    // our own plugin, for a cross-check
-    std::puts ("first argument: sylenth, spire, spirelists, virus or vcclone");
+    std::puts ("first argument: sylenth, spire, spiremap, spirelists, virus or vcclone");
     return 2;
 }
