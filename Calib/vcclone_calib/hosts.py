@@ -89,6 +89,7 @@ class PluginRenderer(Renderer):
         self.plugin_name = plugin_name
         self.id = f'{host}:{os.path.basename(path)}:{_file_id(path)}:{preset_method}:{settle}'
         self._plugin = None
+        self.params_matched = None
 
     # -- pedalboard ---------------------------------------------------------------------
     def _pb(self):
@@ -130,6 +131,9 @@ class PluginRenderer(Renderer):
                 pass
         if count == 0:
             raise RuntimeError('no plugin parameter matched a Virus parameter name; check preset_method')
+        if getattr(self, 'params_matched', None) is None:
+            print(f'[{os.path.basename(self.path)}] {count} of the Virus patch parameters matched plugin parameters '
+                  f'({len(params)} plugin parameters in total)')
         self.params_matched = count
         return count
 
