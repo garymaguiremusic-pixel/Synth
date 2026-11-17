@@ -214,3 +214,12 @@ if(VCCLONE_BUILD_PLUGIN AND VCCLONE_BUILD_SNAPSHOT)
     target_link_libraries(vc_ui_snapshot PRIVATE vc_engine vc_presetio
         juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 endif()
+
+# ------------------------------------------------------------------------------
+# vc_probe: reads Sylenth1's / Spire's parameter lists through the normal plugin API (run once on your PC)
+if(VCCLONE_BUILD_PLUGIN)
+    juce_add_console_app(vc_probe PRODUCT_NAME "vc_probe")
+    target_sources(vc_probe PRIVATE tools/vc_probe/main.cpp)
+    target_compile_definitions(vc_probe PRIVATE JUCE_PLUGINHOST_VST3=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(vc_probe PRIVATE juce::juce_audio_processors juce::juce_recommended_config_flags)
+endif()

@@ -24,7 +24,7 @@ jobs:
 
       - name: Build VST3, vc_render and tests
         shell: bash
-        run: cmake --build build --config Release --target VCClone_VST3 vc_render vc_tests --parallel 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+        run: cmake --build build --config Release --target VCClone_VST3 vc_render vc_tests vc_probe --parallel 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
 
       - name: Unit tests
         shell: bash
@@ -49,6 +49,7 @@ jobs:
           7z a -tzip "$GITHUB_WORKSPACE/out/VC-Clone-VST3-Windows-x64.zip" "VC-Clone.vst3"
           cd "$GITHUB_WORKSPACE"
           7z a -tzip "$GITHUB_WORKSPACE/out/vc_render-Windows-x64.zip" "./build/Release/vc_render.exe"
+          7z a -tzip "$GITHUB_WORKSPACE/out/vc_probe-Windows-x64.zip" "./build/vc_probe_artefacts/Release/vc_probe.exe"
           cd "$GITHUB_WORKSPACE/out"
           git init -q -b "$TARGET"
           git config user.name "github-actions"
