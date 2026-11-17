@@ -179,6 +179,49 @@ class PluginRenderer(Renderer):
         return audio[start:start + int(round(job.length * job.sr))]
 
 
+class OsirusRenderServer(Renderer):
+    """Osirus through the offline `osirusRender` tool (Calib/osirus_render/, built inside a Gearmulator
+    checkout). The whole single dump goes in by SysEx, so every byte of the patch arrives, including the
+    ones Osirus does not expose as host parameters. One process boots the firmware once and renders
+    job after job; each job starts with all-sound-off and 2 s of silence."""
+
+    def __init__(self, exe: str, rom_dir: str, settle: float = 0.5):
+        self.exe, self.rom_dir, self.settle = exe, rom_dir, settle
+        self.id = f'osirusRender:{_file_id(exe)}:{_file_id(rom_dir)}:{settle}'
+        self.proc = None
+        self.device_rate = None
+
+    def _start(self):
+        self.proc = subprocess.Popen([self.exe, self.rom_dir], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        while True:
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError('osirusRender exited during start-up (ROM not found?)')
+            if line.startswith('READY'):
+                self.device_rate = float(line.split('devicerate=')[1])
+                break
+
+    def render(self, job: Job) -> np.ndarray:
+        if self.proc is None or self.proc.poll() is not None:
+            self._start()
+        with tempfile.TemporaryDirectory() as td:
+            syx, out = os.path.join(td, 'p.syx'), os.path.join(td, 'o.wav')
+            open(syx, 'wb').write(job.patch.dump())
+            ev = [f'n:{n.note}:{n.start}:{n.dur}:{n.vel}' for n in job.notes] + [f'c:{t}:{c}:{v}' for t, c, v in job.cc]
+            self.proc.stdin.write(f'R {syx} {out} {job.sr} {job.length} {self.settle} {",".join(ev) or "-"}\n')
+            self.proc.stdin.flush()
+            while True:
+                line = self.proc.stdout.readline()
+                if not line:
+                    self.proc = None
+                    raise RuntimeError('osirusRender stopped')
+                if line.startswith('OK'):
+                    break
+            data, _ = sf.read(out, dtype='float32', always_2d=True)
+            return data
+
+
 def _norm(name: str) -> str:
     import re
     return re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')

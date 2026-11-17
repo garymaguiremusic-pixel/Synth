@@ -21,7 +21,7 @@ import numpy as np
 from . import analysis as A
 from . import fit as fitmod
 from . import probes as P
-from .hosts import Job, Note, PluginRenderer, VcRenderCli
+from .hosts import Job, Note, OsirusRenderServer, PluginRenderer, VcRenderCli
 from .report import write_report
 from .suite import Cache, print_summary, regressions, run_tests, save_run, summarize
 from .sysex import load_singles
@@ -31,7 +31,7 @@ HERE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 def load_config(path):
     cfg = json.load(open(path))
-    for k in ('osirus', 'vc_render', 'vcclone_vst3', 'results_dir', 'cache_dir'):
+    for k in ('osirus', 'osirus_render', 'osirus_rom_dir', 'vc_render', 'vcclone_vst3', 'results_dir', 'cache_dir'):
         if cfg.get(k):
             cfg[k] = os.path.normpath(os.path.join(HERE, cfg[k]))
     cfg['patch_files'] = [os.path.normpath(os.path.join(HERE, p)) for p in cfg.get('patch_files', [])]
@@ -41,8 +41,11 @@ def load_config(path):
 
 
 def make_renderers(cfg):
-    ref = PluginRenderer(cfg['osirus'], host=cfg.get('host', 'pedalboard'), settle=cfg.get('settle_seconds', 0.5),
-                         preset_method=cfg.get('preset_method', 'params'), plugin_name=cfg.get('osirus_plugin_name'))
+    if cfg.get('osirus_render'):
+        ref = OsirusRenderServer(cfg['osirus_render'], cfg['osirus_rom_dir'], settle=cfg.get('settle_seconds', 0.5))
+    else:
+        ref = PluginRenderer(cfg['osirus'], host=cfg.get('host', 'pedalboard'), settle=cfg.get('settle_seconds', 0.5),
+                             preset_method=cfg.get('preset_method', 'params'), plugin_name=cfg.get('osirus_plugin_name'))
     if cfg.get('ours') == 'vst3':
         ours = PluginRenderer(cfg['vcclone_vst3'], host=cfg.get('host', 'pedalboard'), settle=cfg.get('settle_seconds', 0.5))
     else:
