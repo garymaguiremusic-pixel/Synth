@@ -174,13 +174,70 @@ static int probeVst3 (const File& path, const File& out)
     return 0;
 }
 
+// Lists only: one knob per kind of list (osc1_wave stands for osc2..4_wave and so on; every *_target / *_Trg
+// knob shares one list), read at every step of 1/999 until the text stops changing. Takes about a minute.
+static int probeVst3Lists (const File& path, const File& out)
+{
+    AudioPluginFormatManager fm;
+    fm.addFormat (new VST3PluginFormat());
+    OwnedArray<PluginDescription> found;
+    VST3PluginFormat vst3;
+    vst3.findAllTypesForFile (found, path.getFullPathName());
+    if (found.isEmpty()) { std::printf ("no VST3 plugin in %s\n", path.getFullPathName().toRawUTF8()); return 1; }
+    std::printf ("opening %s\n", found[0]->name.toRawUTF8()); std::fflush (stdout);
+    String err;
+    auto inst = fm.createPluginInstance (*found[0], 44100.0, 512, err);
+    if (! inst) { std::printf ("could not open: %s\n", err.toRawUTF8()); return 1; }
+    auto& params = inst->getParameters();
+    auto isNumber = [] (const String& t) { return t.trim().containsOnly ("0123456789.-+ ") && t.trim().isNotEmpty(); };
+    StringArray done;
+    String j;
+    j << "{\n  \"plugin\": \"" << jsonEscape (found[0]->name) << "\",\n  \"lists\": [\n";
+    bool firstParam = true;
+    for (int i = 0; i < params.size(); ++i)
+    {
+        auto* p = params[i];
+        const String name = p->getName (128);
+        String kind = name.retainCharacters ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-");
+        if (kind.containsIgnoreCase ("target") || kind.containsIgnoreCase ("Trg")) kind = "target";
+        if (kind.containsIgnoreCase ("Src")) kind = "source";
+        if (done.contains (kind)) continue;
+        // a list shows text (not a number) somewhere in its first steps
+        bool list = false;
+        for (int k : { 1, 2, 3, 5, 10, 62 })
+            if (! isNumber (p->getText ((float) k / 999.0f, 64))) { list = true; break; }
+        if (! list) continue;
+        done.add (kind);
+        std::printf ("  list %s\n", name.toRawUTF8()); std::fflush (stdout);
+        j << (firstParam ? "" : ",\n") << "    { \"index\": " << i << ", \"name\": \"" << jsonEscape (name) << "\", \"entries\": [";
+        firstParam = false;
+        String last;
+        int same = 0;
+        bool first = true;
+        for (int k = 0; k <= 999 && same < 40; ++k)
+        {
+            const String t = p->getText ((float) k / 999.0f, 64);
+            if (k > 0 && t == last) { ++same; continue; }
+            same = 0;
+            j << (first ? "" : ", ") << "[" << k << ", \"" << jsonEscape (t) << "\"]";
+            first = false;
+            last = t;
+        }
+        j << "] }";
+    }
+    j << "\n  ]\n}\n";
+    out.replaceWithText (j);
+    std::printf ("wrote %s (%d lists)\n", out.getFullPathName().toRawUTF8(), done.size());
+    return 0;
+}
+
 int main (int argc, char** argv)
 {
     ScopedJuceInitialiser_GUI init;
     if (argc < 3)
     {
         std::puts ("usage:\n  vc_probe sylenth <Sylenth1.dll> [bank.fxb]\n  vc_probe spire <Spire.vst3>\n"
-                   "  vc_probe virus <Osirus.vst3>\n  vc_probe vcclone <VC-Clone.vst3>");
+                   "  vc_probe spirelists <Spire.vst3>   (fast: list entries only)\n  vc_probe virus <Osirus.vst3>\n  vc_probe vcclone <VC-Clone.vst3>");
         return 2;
     }
     const String what (argv[1]);
@@ -188,8 +245,9 @@ int main (int argc, char** argv)
     const File cwd = File::getCurrentWorkingDirectory();
     if (what == "sylenth") return probeSylenth (plugin, argc > 3 ? File (String::fromUTF8 (argv[3])) : File(), cwd.getChildFile ("sylenth_params.json"));
     if (what == "spire") return probeVst3 (plugin, cwd.getChildFile ("spire_params.json"));
+    if (what == "spirelists") return probeVst3Lists (plugin, cwd.getChildFile ("spire_lists.json"));
     if (what == "virus") return probeVst3 (plugin, cwd.getChildFile ("virus_params.json"));        // Osirus (or any Virus VST3)
     if (what == "vcclone") return probeVst3 (plugin, cwd.getChildFile ("vcclone_params.json"));    // our own plugin, for a cross-check
-    std::puts ("first argument: sylenth, spire, virus or vcclone");
+    std::puts ("first argument: sylenth, spire, spirelists, virus or vcclone");
     return 2;
 }
