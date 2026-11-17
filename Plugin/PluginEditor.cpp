@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "VirusCLayout.h"
 #include "Tables/Tables.h"
+#include "SpireLists.h"
 
 #include <climits>
 #include <cstring>
@@ -21,38 +22,27 @@ namespace
     const char* kPageNames[] = { "Synth", "Mod", "Matrix", "Arp", "FX", "Browser" };
     const char* kModeNames[] = { "VIRUS", "SYLENTH", "SPIRE" };
 
-    // Spire value lists (names from the Spire documentation; the order of Spire's wave list is approximate)
-    const StringArray kSpOscTypes { "Classic", "Noise", "FM", "AMSync", "SawPWM", "HardFM", "Vowel" };
-    StringArray spWaves()
+    // Spire value lists: the names Spire itself shows, per stored index (Engine/SpireLists.h, from vc_probe)
+    template <size_t N> StringArray toList (const char* const (&items)[N])
     {
-        StringArray w { "Sin", "Tri", "TriSine" };
-        for (int i = 1; i <= 4; ++i) w.add ("Para " + String (i));
-        for (int i = 1; i <= 4; ++i) w.add ("Bass " + String (i));
-        for (int i = 1; i <= 4; ++i) w.add ("Piano A" + String (i));
-        for (int i = 1; i <= 3; ++i) w.add ("Violin " + String (i));
-        w.addArray ({ "Oboe", "Sitar", "Bayan 1", "Bayan 2", "Guitar 1", "Guitar 2", "Guitar 3", "Organ 1", "Organ 2", "Organ 3",
-                      "Brass 1", "Brass 2" });
-        for (int i = 1; i <= 6; ++i) w.add ("Vocal " + String (i));
-        w.addArray ({ "Robo 1", "Robo 2", "Robo 3", "Synth 1", "Synth 2", "Synth 3", "Inter 1", "Inter 2", "FM 1", "FM 2", "FM 3",
-                      "Alarm 1", "Alarm 2" });
-        return w;
+        StringArray out;
+        for (auto* i : items) out.add (String (i).replace ("_", " "));
+        return out;
     }
-    const StringArray kSpUnison { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
-    const StringArray kSpChords { "1 Oct", "2 Oct", "3 Oct", "Maj3", "Min3", "Maj7", "Dom7", "MinMaj7", "Min7", "Min9", "Maj9",
-                                  "Dom9", "HalfDim7", "Dim7", "Sus2", "Sus4", "5th", "4th" };
-    const StringArray kSpFltTypes { "Off", "Perfecto", "Acido", "Infecto", "Scorpio", "Combo", "Shaper" };
-    const StringArray kSpFltModes { "Mode 1", "Mode 2", "Mode 3", "Mode 4", "Mode 5", "Mode 6" };
-    const StringArray kSpVoice { "Mono 1", "Mono 2", "Mono 3", "Mono 4", "Poly 1", "Poly 2" };
+    namespace SL = vc::spire::lists;
+    const StringArray kSpOscTypes = toList (SL::oscTypes);
+    StringArray spWaves() { return toList (SL::waves); }
+    const StringArray kSpUnison = toList (SL::unisonCounts);
+    const StringArray kSpChords = toList (SL::unisonModes);
+    const StringArray kSpFltTypes = toList (SL::filterTypes);
+    const StringArray kSpFltModes = toList (SL::filterModes);
+    const StringArray kSpVoice = toList (SL::voiceModes);
     const StringArray kSpPoly { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16" };
     const StringArray kSpBend { "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24" };
-    const StringArray kSpCurve { "Lin", "Exp", "Pow" };
-    StringArray spLfoForms() { StringArray f { "Sin", "Tri", "Sqr", "S&H", "S&G" }; f.addArray (spWaves()); return f; }
-    StringArray spTargets() { StringArray t; t.add ("Off"); for (int i = 1; i < 230; ++i) t.add (i == 45 ? String ("Cutoff 1") : "ID " + String (i)); return t; }
-    StringArray spSources() { return { "Off", "Osc1", "Osc2", "Osc3", "Osc4", "Env1", "Env2", "Env3", "Env4", "LFO1", "LFO2", "LFO3", "LFO4", "Velocity",
-                                       "KeyFollow", "RandBi", "PitchWheel", "ModWheel", "Aftertouch", "Foot", "Breath", "Expression", "Sustain",
-                                       "Stepper1", "Stepper2", "ArpStep", "Mod1", "Mod2", "Mod3", "Mod4", "RandUni", "Const10%", "Const50%" }; }
-    const StringArray kSpSync { "16/1", "8/1", "4/1", "2/1", "1/1", "3/4", "2/3", "1/2", "3/8", "1/3", "1/4", "3/16", "1/6", "1/8",
-                                "3/32", "1/12", "1/16", "3/64", "1/24", "1/32", "1/64" };
+    StringArray spLfoForms() { return toList (SL::lfoForms); }
+    StringArray spTargets() { return toList (SL::targets); }
+    StringArray spSources() { return toList (SL::sources); }
+    const StringArray kSpSync = toList (SL::arpSpeeds);
 
     bool isListParam (int o)
     {

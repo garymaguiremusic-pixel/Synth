@@ -519,8 +519,8 @@ StringArray VCCloneAudioProcessor::getPatchNotes() const
         s.add ("Sylenth preset: oscillators, filters, envelopes, LFOs, mod slots and arp steps are mapped. Sylenth's own "
                "effects are replaced by the global FX; the envelope/cutoff curves are not yet measured against Sylenth.");
     if (getMode() == vc::SynthMode::Spire)
-        s.add ("Spire: modulation targets are decoded only where Spire's target ID is known (Cutoff 1 so far); "
-               "the full list comes from tools/vc_probe.");
+        s.add ("Spire: all 230 modulation targets and 33 sources are named (from Spire via vc_probe). Oscillator, filter, "
+               "LFO and volume targets are applied; envelope-time, FX and arp targets are not modelled yet.");
     return s;
 }
 

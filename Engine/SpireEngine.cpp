@@ -32,15 +32,16 @@ namespace
 
     // Mod targets: Spire's target IDs; only the ones confirmed so far are decoded.
     // The full list comes from the parameter probe (tools/vc_probe) - see README.
-    enum Target { TNone, TCutoff1, TCutoff2, TReso1, TPitchAll, TVolume };
-    Target decodeTarget (int id)
-    {
-        switch (id)
-        {
-            case 45: return TCutoff1;     // "Cutoff_1:45" (confirmed in the analysis)
-            default: return TNone;
-        }
-    }
+    // Spire's modulation targets and sources by stored index (names in SpireLists.h, read from the
+    // user's Spire with vc_probe). Osc n (0..3) targets start at 6 + 11 n.
+    enum : int { TOscAmp = 1, TAllPitch = 5, TOscBase = 6, TOscStride = 11,
+                 OPitch = 0, OCtrlA, OCtrlB, OPhase, OWave, OWtMix, ODetune, ODensity, OWide, OPan, OSend,
+                 TCut1 = 50, TRes1, TCut2, TRes2, TBalance, TAllLfoRate = 87, TLfoBase = 88, TLfoStride = 7,
+                 LRate = 0, LSym, LPhase, LForm, LAmp, LAmt1, LAmt2, TMainVolume = 151 };
+    enum : int { SOsc1 = 1, SEnv1 = 5, SLfo1 = 9, SVelocity = 13, SKey, SRandBi, SRandUni, SPitchWheel, SModWheel, SAftertouch,
+                 SFoot, SBreath, SExpression, SSustain, SStepper1, SStepper2, SArpStep, SMod1, SConst10 = 31, SConst50 };
+    inline int oscTarget (int osc, int what) { return TOscBase + osc * TOscStride + what; }
+    inline int lfoTarget (int lfo, int what) { return TLfoBase + lfo * TLfoStride + what; }
 
     double polyBlep (double t, double dt) { return dsp::polyBlep (t, dt); }
 }
@@ -87,7 +88,12 @@ int SpireEngine::activeVoiceCount() const
 
 void SpireEngine::controller (int cc, int value)
 {
-    if (cc == 1) modWheel = value / 127.0;
+    const double x = value / 127.0;
+    if (cc == 1) modWheel = x;
+    if (cc == 2) breath = x;
+    if (cc == 4) foot = x;
+    if (cc == 11) expression = x;
+    if (cc == 64) sustainPedal = x;
     if (cc == 120 || cc == 123) allNotesOff (cc == 120);
 }
 
@@ -150,6 +156,8 @@ void SpireEngine::noteOff (int note)
 
 void SpireEngine::startVoice (Voice& v, int note, float vel, bool legato)
 {
+    v.randBi = rng.bipolar();
+    v.randUni = 0.5 * (v.randBi + 1.0);
     const bool wasActive = v.active;
     v.active = true;
     v.gate = true;
@@ -231,21 +239,9 @@ double SpireEngine::envTick (Voice& v, int e)
 //==============================================================================
 void SpireEngine::controlVoice (Voice& v)
 {
-    // modulation from the envelopes' and LFOs' hard targets and the matrix (known targets only)
-    v.modCut1 = v.modCut2 = v.modRes1 = v.modVol = 0;
-    for (auto& m : v.modPitch) m = 0;
-    auto apply = [&] (int targetId, double amount)
-    {
-        switch (decodeTarget (targetId))
-        {
-            case TCutoff1: v.modCut1 += amount; break;
-            case TCutoff2: v.modCut2 += amount; break;
-            case TReso1:   v.modRes1 += amount; break;
-            case TPitchAll: for (auto& m : v.modPitch) m += amount * 24.0; break;
-            case TVolume:  v.modVol += amount; break;
-            default: break;
-        }
-    };
+    // envelopes' and LFOs' own targets plus the 15 matrix slots, summed per target
+    v.mod.fill (0.0);
+    auto apply = [&] (int target, double amount) { if (target > 0 && target < kNumTargets) v.mod[(size_t) target] += amount; };
     for (int e = 0; e < 4; ++e)
     {
         const int base = env1_att + e * kEnvStride;
@@ -270,6 +266,53 @@ void SpireEngine::controlVoice (Voice& v)
             apply (tgt, val * (p (base + 11 + t * 3) - 0.5) * 2.0);
         }
     }
+    auto source = [&] (int id) -> double
+    {
+        if (id >= SEnv1 && id < SEnv1 + 4) return v.env[(size_t) (id - SEnv1)].level;
+        if (id >= SLfo1 && id < SLfo1 + 4) return v.lfo[(size_t) (id - SLfo1)].value;
+        if (id >= SMod1 && id < SMod1 + 4) return p (spire::idx::macro1 + (id - SMod1));
+        switch (id)
+        {
+            case SVelocity: return v.vel;
+            case SKey: return (v.curNote - 60.0) / 64.0;
+            case SRandBi: return v.randBi;
+            case SRandUni: return v.randUni;
+            case SPitchWheel: return bend;
+            case SModWheel: return modWheel;
+            case SAftertouch: return aftertouch;
+            case SFoot: return foot;
+            case SBreath: return breath;
+            case SExpression: return expression;
+            case SSustain: return sustainPedal;
+            case SConst10: return 0.1;
+            case SConst50: return 0.5;
+            default: return 0.0;      // oscillator outputs, steppers and the arp step are not modelled yet
+        }
+    };
+    for (int s = 0; s < 15; ++s)
+    {
+        const int base = slot1_Src1 + s * 10;
+        const int s1 = listIndex (p (base)), s2 = listIndex (p (base + 1));
+        if (s1 == 0 && s2 == 0) continue;
+        double src = s1 ? source (s1) : 1.0;
+        if (s2) src *= source (s2);
+        for (int t = 0; t < 4; ++t)
+        {
+            const int tgt = listIndex (p (base + 3 + t * 2));
+            if (tgt) apply (tgt, src * (p (base + 2 + t * 2) - 0.5) * 2.0);
+        }
+    }
+    v.modCut1 = v.mod[TCut1];
+    v.modCut2 = v.mod[TCut2];
+    v.modRes1 = v.mod[TRes1];
+    v.modVol = v.mod[TMainVolume];
+    for (int o = 0; o < 4; ++o)
+    {
+        v.modPitch[o] = (v.mod[TAllPitch] + v.mod[(size_t) oscTarget (o, OPitch)]) * 24.0;
+        v.modCtrlA[o] = v.mod[(size_t) oscTarget (o, OCtrlA)];
+        v.modCtrlB[o] = v.mod[(size_t) oscTarget (o, OCtrlB)];
+        v.modWt[o] = v.mod[(size_t) oscTarget (o, OWtMix)];
+    }
 }
 
 void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
@@ -279,7 +322,7 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
     const double bendSemis = bend >= 0 ? bend * listIndex (p (bend_up)) : bend * listIndex (p (bend_dn));
     const double masterGain = p (spire::idx::volume) * 2.0;
     const int rout = flag (p (flt_rout)) ? 1 : 0;
-    const double balance = p (flt_balance);
+    const double balanceKnob = p (flt_balance);
     const double keytrack = (p (flt_keytrack) - 0.5) * 2.0;
     const double velSens = p (spire::idx::velocity);
     const bool ampOverride = global && global->ampOverride;
@@ -297,6 +340,7 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
                 const int base = lfo1_rate + l * kLfoStride;
                 auto& lf = v.lfo[(size_t) l];
                 double hz = flag (p (base + 3)) ? bpm / 60.0 / kSyncBeats[std::clamp (listIndex (p (base)) % 21, 0, 20)] : lfoHz (p (base));
+                hz *= std::pow (2.0, 4.0 * (v.mod[TAllLfoRate] + v.mod[(size_t) lfoTarget (l, LRate)]));
                 const double prev = lf.phase;
                 lf.phase += hz * 32.0 / sr;
                 const bool wrap = lf.phase >= 1.0;
@@ -315,7 +359,7 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
                 }
                 const double fadeT = envSeconds (p (base + 9));
                 lf.fade = fadeT > 0 ? std::min (1.0, lf.fade + 32.0 / (sr * fadeT)) : 1.0;
-                lf.value = val * (p (base + 8) * 2.0) * lf.fade;
+                lf.value = val * std::max (0.0, p (base + 8) * 2.0 + v.mod[(size_t) lfoTarget (l, LAmp)]) * lf.fade;
             }
             controlVoice (v);
             if (global) v.gstage.control (*global, sr, 32);
@@ -328,7 +372,7 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
                 double cut = p (base + 2) + (f == 0 ? v.modCut1 : v.modCut2) + keytrack * (v.curNote - 60) / 127.0;
                 if (f == 1 && flag (p (flt_link))) cut = p (flt1_cut) + (p (flt2_cut) - 0.5) + v.modCut1 + keytrack * (v.curNote - 60) / 127.0;
                 const double hz = std::min (cutoffHz (cut), sr * 0.45);
-                const double res = std::clamp (p (base + 3) + (f == 0 ? v.modRes1 : 0.0), 0.0, 1.0);
+                const double res = std::clamp (p (base + 3) + (f == 0 ? v.modRes1 : v.mod[TRes2]), 0.0, 1.0);
                 for (int c = 0; c < 2; ++c)
                 {
                     auto& a = f == 0 ? v.f1a[c] : v.f2a[c];
@@ -356,7 +400,7 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
         for (int o = 0; o < 4; ++o)
         {
             if (flag (p (osc1_mute + o))) continue;
-            const double level = p (mix_osc1 + o);
+            const double level = std::clamp (p (mix_osc1 + o) + v.mod[(size_t) (TOscAmp + o)], 0.0, 1.0);
             if (level <= 0.0) continue;
             const int base = osc1_type + o * kOscStride;
             auto& osc = v.osc[(size_t) o];
@@ -364,17 +408,19 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
             const int oct = (int) (p (base + 1) * 8.99f) - 4;
             const int semi = (int) (p (base + 2) * 22.99f) - 11;
             const double fine = (p (base + 3) - 0.5) * 2.0;
-            const double ctrlA = std::clamp ((double) p (base + 4), 0.0, 1.0);
-            const double ctrlB = std::clamp ((double) p (base + 5), 0.0, 1.0);
+            const double ctrlA = std::clamp ((double) p (base + 4) + v.modCtrlA[o], 0.0, 1.0);
+            const double ctrlB = std::clamp ((double) p (base + 5) + v.modCtrlB[o], 0.0, 1.0);
             const int wave = listIndex (p (base + 7));
-            const double wtmix = p (base + 8);
-            const double udet = p (base + 9), uwid = p (base + 10), uden = p (base + 13);
+            const double wtmix = std::clamp (p (base + 8) + v.modWt[o], 0.0, 1.0);
+            const double udet = std::clamp (p (base + 9) + v.mod[(size_t) oscTarget (o, ODetune)], 0.0, 1.0);
+            const double uwid = std::clamp (p (base + 10) + v.mod[(size_t) oscTarget (o, OWide)], 0.0, 1.0);
+            const double uden = std::clamp (p (base + 13) + v.mod[(size_t) oscTarget (o, ODensity)], 0.0, 1.0);
             const int chord = listIndex (p (base + 12));
-            const double pan = (p (base + 14) - 0.5) * 2.0;
+            const double pan = std::clamp ((p (base + 14) - 0.5) * 2.0 + v.mod[(size_t) oscTarget (o, OPan)], -1.0, 1.0);
             const double drift = p (base + 15) * 0.08 * osc.drift;
             const double inv = flag (p (base + 16)) ? -1.0 : 1.0;
             const bool keyOn = p (base + 17) > 0.5f;
-            const double mixto = p (base + 18);
+            const double mixto = std::clamp (p (base + 18) + v.mod[(size_t) oscTarget (o, OSend)], 0.0, 1.0);
             const double noteBase = (keyOn ? v.curNote : 60.0) + oct * 12 + semi + fine + bendSemis + drift + v.modPitch[(size_t) o];
             const int count = osc.count;
             const auto& chordNotes = kChords[(size_t) std::clamp (chord, 0, (int) kChords.size() - 1)];
@@ -526,6 +572,7 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
         }
         else
         {
+            const double balance = std::clamp (balanceKnob + v.mod[TBalance], 0.0, 1.0);
             l = runFilter (0, inF1L, 0) * balance + runFilter (1, inF2L, 0) * (1.0 - balance);
             r = runFilter (0, inF1R, 1) * balance + runFilter (1, inF2R, 1) * (1.0 - balance);
         }

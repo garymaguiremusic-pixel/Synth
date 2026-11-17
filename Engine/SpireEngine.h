@@ -31,6 +31,7 @@ public:
     void noteOff (int note) override;
     void pitchBend (int v14) override { bend = (v14 - 8192) / 8192.0; }
     void controller (int cc, int value) override;
+    void channelPressure (int v) override { aftertouch = v / 127.0; }
     void allNotesOff (bool hard) override;
     void setTempo (double b) override { bpm = b > 0 ? b : 120.0; }
     void setGlobal (const GlobalVoiceSettings* g) override { global = g; }
@@ -54,6 +55,9 @@ public:
     static int listIndex (float v) { return (int) (v * 999.99f); }
     static bool flag (float v) { return (int) (v * 1.99f) != 0; }
 
+public:
+    static constexpr int kNumTargets = 230;
+
 private:
     struct Unison { double phase = 0, phase2 = 0, detune = 0, pan = 0, gain = 1, fb = 0; };
     struct Osc { std::array<Unison, kMaxUnison> u; int count = 1; double drift = 0; dsp::OnePole noiseLp; };
@@ -74,6 +78,8 @@ private:
         GlobalVoiceStage gstage;
         int ctl = 0;
         double modCut1 = 0, modCut2 = 0, modRes1 = 0, modPitch[4] {}, modVol = 0, modCtrlA[4] {}, modCtrlB[4] {}, modWt[4] {};
+        std::array<double, kNumTargets> mod {};    // summed modulation per Spire target (SpireLists.h: targets)
+        double randBi = 0, randUni = 0;            // per-note random sources
         dsp::Rng rng;
     };
 
@@ -86,7 +92,7 @@ private:
     std::array<float, spire::kNumParams> params {};
     std::array<Voice, kMaxVoices> voices;
     std::vector<double> bufL, bufR;
-    double sr = 44100, bpm = 120, bend = 0, modWheel = 0;
+    double sr = 44100, bpm = 120, bend = 0, modWheel = 0, aftertouch = 0, foot = 0, breath = 0, expression = 0, sustainPedal = 0;
     const GlobalVoiceSettings* global = nullptr;
     uint64_t ageCounter = 0;
     std::vector<int> held;
