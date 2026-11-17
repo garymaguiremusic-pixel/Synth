@@ -1,6 +1,6 @@
 # Prompt for Claude Code: build "VC-Clone", a Virus C-style test synth
 
-Before starting, create a new empty project folder and copy these files from `C:\Users\gmaguire\Desktop\SYnth\analysis\` into `<project>/reference/`:
+Before starting, create a new empty project folder and copy these files from your analysis folder into `<project>/reference/`:
 - `virusC_single_256byte_map.csv`
 - `osirus_valuelists.json.txt`
 - `osirus_parameterDescriptions.json`
