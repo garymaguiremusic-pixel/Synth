@@ -119,8 +119,8 @@ void Envelope::setup (double a, double d, double s, int sustainTime, double r, d
     decayCoef = d <= 0.0 ? 0.0 : std::exp (-6.9 / (d * sr));
     releaseCoef = r <= 0.0 ? 0.0 : std::exp (-6.9 / (r * sr));
     sustain = std::clamp (s, 0.0, 1.0);
-    const double slope = tables::sustainSlopeSec (sustainTime);
-    slopePerSample = slope == 0.0 ? 0.0 : (1.0 / (slope * sr));   // signed
+    // sustain slope: dB per second -> gain per sample
+    slopeMulPerSample = std::pow (10.0, tables::sustainSlopeDbPerSec (sustainTime) / (20.0 * sr));
 }
 
 double Envelope::tick()
@@ -137,7 +137,11 @@ double Envelope::tick()
             if (std::abs (level - sustain) < 1.0e-4) { level = sustain; stage = Stage::Sustain; }
             break;
         case Stage::Sustain:
-            if (slopePerSample != 0.0) level = std::clamp (level + slopePerSample, 0.0, 1.0);
+            if (slopeMulPerSample != 1.0)
+            {
+                level = std::min (1.0, std::max (level, 1.0e-6) * slopeMulPerSample);
+                if (level < 1.0e-5 && slopeMulPerSample < 1.0) { level = 0.0; stage = Stage::Idle; }
+            }
             break;
         case Stage::Release:
             level *= releaseCoef;
@@ -367,6 +371,7 @@ void Voice::controlTick (Synth& s, int blockLen)
     ctl.gNoise = tables::volumeGain (pv (Noise_Volume));
     ctl.gRing = tables::volumeGain (pv (Ringmodulator_Volume));
     ctl.gMain = tables::mainVolumeGain (pv (Osc_Mainvolume));
+    ctl.drive = tables::mainVolumeDrive (pv (Osc_Mainvolume));
     ctl.noiseColor = sgn (Noise_Color);
 
     // --- filters ------------------------------------------------------------------------
@@ -402,12 +407,10 @@ void Voice::controlTick (Synth& s, int blockLen)
     ctl.satAmount = std::clamp ((pv (Osc_Mainvolume) - 32.0) / 95.0, 0.0, 1.0);
 
     // --- amp / pan ------------------------------------------------------------------------
-    const double ampVel = sgn (Amp_Velocity);
-    double velGain = ampVel >= 0 ? 1.0 - ampVel * (1.0 - vel) : 1.0 + ampVel * vel;
-    velGain = std::max (0.0, velGain);
+    const double velGain = tables::ampVelocityGain (sgn (Amp_Velocity), vel);
     const double vol = tables::patchVolumeGain (pv (Patch_Volume)) * tables::volumeGain (pv (Channel_Volume))
                      * (s.src.cc[11] > 0.0f ? s.src.cc[11] : 1.0f);
-    ctl.level = vol * velGain / std::sqrt ((double) unisonCount);
+    ctl.level = vol * velGain / std::sqrt ((double) unisonCount) * std::pow (10.0, tables::kOutputTrimDb / 20.0);
     double pan = sgn (Panorama) + sgn (Pan_Lfo2_Amount) * lfoVal[1] + uniPan + sgn (Panorama_Velocity) * (vel - 0.5);
     pan = std::clamp (pan, -1.0, 1.0);
     ctl.panL = std::cos ((pan + 1.0) * kPi * 0.25);
@@ -587,7 +590,8 @@ void Voice::render (Synth& s, double* L, double* R, int numSamples)
             {
                 const double in = (pathA + pathB) * gMain + common;
                 double y1 = runF1 (in);
-                y1 = satShaper.process (ctl.satCurve, y1, ctl.satAmount, satHz, sr);
+                if (ctl.satCurve != 0)   // Osc Volume above 64 drives the saturation (level compensated)
+                    y1 = satShaper.process (ctl.satCurve, y1 * ctl.drive, ctl.satAmount, satHz, sr) / ctl.drive;
                 const double y2 = runF2 (y1);
                 out = y1 * (1.0 - bal) + y2 * bal;
                 break;

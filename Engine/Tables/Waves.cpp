@@ -80,7 +80,7 @@ WaveBank::WaveBank()
         else
         {
 #ifdef VC_MEASURED_WAVES
-            for (int h = 0; h < kHarmonics; ++h) m[(size_t) h] = measured::kWaveHarmonics[w][h];
+            for (int h = 0; h < kHarmonics; ++h) m[(size_t) h] = tables::measured::kWaveHarmonics[w][h];
 #else
             placeholderSpectrum (w, m);
 #endif

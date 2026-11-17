@@ -76,34 +76,35 @@ def fit(results_path: str, out_path: str = OUT, log=print):
     if t is not None:
         tables.append(_arr('kRelease', t)); defines.append('VC_MEASURED_RELEASE')
 
-    sus = _series(results, 'env/amp_sustain_time/')
-    if len(sus) >= 4:
-        # dB change over 4 s from level 64/127 -> signed full-ramp time (s); 0 = hold
-        pts = {}
-        for k, dbc in sus.items():
-            if abs(dbc) < 0.1:
-                pts[k] = 0.0
-            else:
-                dl = (64 / 127) * (10 ** (dbc / 20) - 1)
-                pts[k] = 4.0 / dl if abs(dl) > 1e-6 else 0.0
-        xs = sorted(pts)
-        full = np.interp(np.arange(128), xs, [pts[x] for x in xs])
-        tables.append(_arr('kSustainTime', full)); defines.append('VC_MEASURED_SUSTAIN_TIME')
-        notes.append('sustain time: interpolated linearly between measured points (check the sign convention in the report)')
+    # sustain time: measured, but modelled as a dB/s law in Tables.h (sustainSlopeDbPerSec)
 
     lfo = _series(results, 'lfo/lfo1_rate/')
-    t = _interp128(lfo, log=True)
-    if t is not None:
+    pts = sorted((v, r) for v, r in lfo.items() if 0.5 <= r <= 15.0)
+    good, last = [], 0.0
+    for v, r in pts:
+        if r > last:
+            good.append((v, r)); last = r
+    if len(good) >= 4:
+        xs = np.array([g[0] for g in good], dtype=float)
+        ys = np.log(np.array([g[1] for g in good]))
+        b, a = np.polyfit(xs, ys, 1)
+        t = np.exp(a + b * np.arange(128))
         tables.append(_arr('kLfoRate', t)); defines.append('VC_MEASURED_LFO_RATE')
+        notes.append(f'lfo rate: log-linear fit over {len(good)} points ({good[0][0]}..{good[-1][0]}), doubles every {np.log(2) / b:.1f} steps')
 
     det = _series(results, 'pitch/osc2_detune/')
     if det:
         base = det.get(0)
         if base:
             cents = {k: 1200 * math.log2(v / base) for k, v in det.items() if v > 0}
-            t = _interp128(cents)
-            if t is not None:
+            # noisy pitch readings: fit cents = c * (v/127)^p (least squares in log space, v >= 16)
+            pts = [(k, c) for k, c in cents.items() if k >= 16 and c > 0.05]
+            if len(pts) >= 4:
+                xs = np.log(np.array([k / 127.0 for k, _ in pts])); ys = np.log(np.array([c for _, c in pts]))
+                pexp, logc = np.polyfit(xs, ys, 1)
+                t = np.exp(logc) * (np.arange(128) / 127.0) ** pexp
                 tables.append(_arr('kDetuneCents', t)); defines.append('VC_MEASURED_DETUNE')
+                notes.append(f'detune: cents = {np.exp(logc):.1f} * (v/127)^{pexp:.2f}')
 
     waves = {}
     for r in results:
@@ -114,7 +115,7 @@ def fit(results_path: str, out_path: str = OUT, log=print):
         rows = []
         for w in range(64):
             h = list(waves[w]) + [0.0] * (64 - len(waves[w]))
-            rows.append('{ ' + ', '.join(f'{x:.5g}f' for x in h[:64]) + ' }')
+            rows.append('{ ' + ', '.join(f'{x:.6e}f' for x in h[:64]) + ' }')
         tables.append('inline constexpr float kWaveHarmonics[64][64] = {\n    ' + ',\n    '.join(rows) + ' };')
         defines.append('VC_MEASURED_WAVES')
     elif waves:

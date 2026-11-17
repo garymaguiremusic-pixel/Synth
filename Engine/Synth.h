@@ -53,7 +53,7 @@ struct Envelope
     enum class Stage { Idle, Attack, Decay, Sustain, Release };
     Stage stage = Stage::Idle;
     double level = 0.0;
-    double attackInc = 1.0, decayCoef = 0.0, releaseCoef = 0.0, sustain = 1.0, slopePerSample = 0.0;
+    double attackInc = 1.0, decayCoef = 0.0, releaseCoef = 0.0, sustain = 1.0, slopeMulPerSample = 1.0;
     void setup (double a, double d, double s, int sustainTime, double r, double sr);
     void gateOn (bool retriggerFromZero) { if (retriggerFromZero) level = 0.0; stage = Stage::Attack; }
     void gateOff() { if (stage != Stage::Idle) stage = Stage::Release; }
@@ -102,7 +102,7 @@ private:
         double shape1 = 64, shape2 = 64, duty1 = .5, duty2 = .5;
         int wave1 = 0, wave2 = 0, osc3Mode = 0;
         double fm = 0; int fmMode = 0;
-        double g1 = 1, g2 = 0, gSub = 0, gOsc3 = 0, gNoise = 0, gRing = 0, gMain = 1;
+        double g1 = 1, g2 = 0, gSub = 0, gOsc3 = 0, gNoise = 0, gRing = 0, gMain = 1, drive = 1;
         double noiseColor = 0;
         double cut1 = 1000, cut2 = 1000, damp1 = 2, damp2 = 2, ladderK = 0;
         double filtGain = 1;
