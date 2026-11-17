@@ -1,5 +1,5 @@
 #pragma once
-// Runs the Synth at its fixed internal 44.1 kHz rate and converts to the host rate
+// Runs the Synth at its fixed internal rate (46.875 kHz, as measured on Osirus) and converts to the host rate
 // with a windowed-sinc (Kaiser, 32 taps, 512-phase table) fractional resampler.
 
 #include "Synth.h"

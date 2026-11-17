@@ -17,7 +17,7 @@
 
 namespace vc::tables
 {
-constexpr double kInternalRate = 44100.0;
+constexpr double kInternalRate = 46875.0;   // measured: Osirus runs the Virus C DSP at 46875 Hz
 
 enum class Status { Guessed, Measured };
 struct TableInfo { const char* name; Status status; const char* note; };

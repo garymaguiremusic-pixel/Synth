@@ -1,6 +1,6 @@
 #pragma once
 // VC-Clone engine: a clean-room Virus C style single-part synth.
-// No JUCE dependency. Internal rate is fixed at 44.1 kHz; voices run 2x oversampled
+// No JUCE dependency. Internal rate is fixed at 46.875 kHz (the Virus C rate); voices run 2x oversampled
 // (88.2 kHz) and are decimated before the FX chain. HostEngine (Resampler.h)
 // converts to the host rate.
 
@@ -137,7 +137,7 @@ public:
     /** Back to a clean start (no voices, FX tails, LFO phases or glide history; RNG re-seeded). */
     void reset();
 
-    /** Renders at the internal 44.1 kHz rate. */
+    /** Renders at the internal rate (tables::kInternalRate). */
     void renderInternal (float* L, float* R, int numSamples);
 
     int activeVoiceCount() const;

@@ -1,5 +1,5 @@
 #pragma once
-// Saturation / distortion shapers and the part FX chain (44.1 kHz, stereo).
+// Saturation / distortion shapers and the part FX chain (internal rate, stereo).
 // Order (to be verified by calibration): Distortion -> Analog Boost -> EQ ->
 // Chorus -> Phaser -> Delay/Reverb (send).
 
@@ -43,7 +43,7 @@ public:
     void process (float* L, float* R, int n, const ParamState&, double bpm, const std::array<float, 256>& mod);
 
 private:
-    double sr = 44100.0;
+    double sr = 46875.0;          // = tables::kInternalRate
     Shaper distL, distR;
     dsp::Biquad boostL, boostR, lowL, lowR, midL, midR, highL, highR;
     int eqCounter = 0;
