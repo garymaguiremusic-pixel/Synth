@@ -37,7 +37,15 @@ add_custom_command(
             ${CMAKE_SOURCE_DIR}/reference/osirus_parameterDescriptions.json
     COMMENT "Generating VirusCLayout.h"
     VERBATIM)
-add_custom_target(vc_layout DEPENDS ${VC_LAYOUT_H})
+set(VC_SPIRE_LAYOUT_H ${VC_GEN_DIR}/SpireLayout.h)
+add_custom_command(
+    OUTPUT  ${VC_SPIRE_LAYOUT_H}
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gen_spire_layout.py
+            ${CMAKE_SOURCE_DIR}/reference/spire_param_map.csv ${VC_SPIRE_LAYOUT_H}
+    DEPENDS ${CMAKE_SOURCE_DIR}/tools/gen_spire_layout.py ${CMAKE_SOURCE_DIR}/reference/spire_param_map.csv
+    COMMENT "Generating SpireLayout.h"
+    VERBATIM)
+add_custom_target(vc_layout DEPENDS ${VC_LAYOUT_H} ${VC_SPIRE_LAYOUT_H})
 
 # ------------------------------------------------------------------------------
 # PresetIO (pure C++)
@@ -52,6 +60,8 @@ add_library(vc_engine STATIC
     Engine/Synth.cpp
     Engine/Fx.cpp
     Engine/HostEngine.cpp
+    Engine/Global.cpp
+    Engine/SpireEngine.cpp
     Engine/Tables/Waves.cpp)
 add_dependencies(vc_engine vc_layout)
 target_include_directories(vc_engine PUBLIC Engine Engine/Tables ${VC_GEN_DIR})
