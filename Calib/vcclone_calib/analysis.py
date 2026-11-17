@@ -229,10 +229,11 @@ def fit_filter(f, h_db, kind='lp') -> dict:
     if len(fb) < 6:
         return {'cutoff_hz': float('nan'), 'q': float('nan'), 'peak_db': float('nan')}
     qs = np.linspace(0.0, 3.9, 14) if kind == 'lp4' else np.geomspace(0.4, 60, 16)
+    qmin = 0.3            # below this low-Q curves trade cutoff for Q (degenerate)
 
     def err(params):
         fc, q = np.exp(params[0]), params[1]
-        if kind != 'lp4' and q <= 0.05:
+        if kind != 'lp4' and q <= qmin:
             return 1e9
         if kind == 'lp4' and not 0.0 <= q < 4.2:
             return 1e9
@@ -299,20 +300,24 @@ def decay_time(x, sr, start_s=0.0, floor_db=-60.0) -> float:
 
 # --- LFO rate --------------------------------------------------------------------------------------
 def modulation_rate(x, sr, min_hz=0.02, max_hz=80.0) -> float:
-    """Rate of amplitude modulation (tremolo / filter wobble) from the envelope's autocorrelation."""
+    """Rate of amplitude modulation (tremolo / filter wobble): the strongest line in the spectrum of the
+    level envelope (dB, 500 Hz frame rate), zero-padded and refined by parabolic interpolation."""
     e = envelope_db(x, sr, 2.0)
-    e = e - e.mean()
     fs = 500.0
-    ac = np.correlate(e, e, 'full')[len(e) - 1:]
-    lo, hi = int(fs / max_hz), min(len(ac) - 1, int(fs / min_hz))
-    if hi <= lo + 2:
+    e = e[int(0.3 * fs):] if len(e) > int(fs) else e        # skip the attack
+    e = signal.detrend(e) * np.hanning(len(e))
+    n = 1 << int(np.ceil(np.log2(len(e) * 8)))
+    spec = np.abs(np.fft.rfft(e, n))
+    f = np.fft.rfftfreq(n, 1.0 / fs)
+    m = (f >= max(min_hz, 1.5 / (len(e) / fs))) & (f <= max_hz)
+    if not m.any():
         return float('nan')
-    seg = ac[lo:hi]
-    peaks, _ = signal.find_peaks(seg)
-    if len(peaks) == 0:
-        return float('nan')
-    p = peaks[np.argmax(seg[peaks])] + lo
-    return fs / p
+    idx = np.flatnonzero(m)
+    k = idx[np.argmax(spec[idx])]
+    if 0 < k < len(spec) - 1:
+        a, b, c = np.log(spec[k - 1:k + 2] + 1e-12)
+        k = k + 0.5 * (a - c) / (a - 2 * b + c) if (a - 2 * b + c) != 0 else k
+    return float(k * fs / n)
 
 
 def pitch_modulation_rate(x, sr, f0_guess: float) -> float:
