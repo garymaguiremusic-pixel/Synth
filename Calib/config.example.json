@@ -1,0 +1,16 @@
+{
+  "_comment": "Copy to config.json. Paths are relative to Calib/. Load your Virus C ROM in Osirus once (its own UI); this tool never opens it.",
+  "osirus": "C:/Program Files/Common Files/VST3/Osirus.vst3",
+  "osirus_plugin_name": null,
+  "vc_render": "../build/Release/vc_render.exe",
+  "vcclone_vst3": "../build/VCClone_artefacts/Release/VST3/VC-Clone.vst3",
+  "ours": "vc_render",
+  "host": "pedalboard",
+  "preset_method": "params",
+  "settle_seconds": 0.5,
+  "sample_rate": 44100,
+  "block_size": 512,
+  "patch_files": ["../my_banks/bank1.mid"],
+  "results_dir": "results",
+  "cache_dir": "cache"
+}

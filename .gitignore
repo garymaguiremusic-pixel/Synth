@@ -1,0 +1,10 @@
+build*/
+cmake-build-*/
+.vs/
+.vscode/
+*.user
+__pycache__/
+*.pyc
+Calib/config.json
+Calib/results/
+Calib/cache/

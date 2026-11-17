@@ -1,0 +1,70 @@
+name: Build plugin
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Configure
+        shell: bash
+        run: cmake -B build -A x64 2>&1 | tee configure.log; exit ${PIPESTATUS[0]}
+
+      - name: Build VST3, vc_render and tests
+        shell: bash
+        run: cmake --build build --config Release --target VCClone_VST3 vc_render vc_tests --parallel 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+
+      - name: Unit tests
+        shell: bash
+        run: ./build/Release/vc_tests.exe 2>&1 | tee tests.log; exit ${PIPESTATUS[0]}
+
+      - name: Harness self-check (VC-Clone vs itself, no Osirus needed)
+        shell: bash
+        run: |
+          python -m pip install --quiet numpy scipy soundfile pytest
+          cd Calib && VC_RENDER="$GITHUB_WORKSPACE/build/Release/vc_render.exe" python -m pytest -q tests/test_selfcheck.py 2>&1 | tee ../selfcheck.log; exit ${PIPESTATUS[0]}
+
+      # The zipped plugin goes to a "builds" branch (fetched with git) instead of
+      # Actions artifacts, so it never counts against the artifact storage quota.
+      - name: Publish VST3 to builds branch
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          mkdir out
+          cd build/VCClone_artefacts/Release/VST3
+          7z a -tzip "$GITHUB_WORKSPACE/out/VC-Clone-VST3-Windows-x64.zip" "VC-Clone.vst3"
+          cd "$GITHUB_WORKSPACE"
+          7z a -tzip "$GITHUB_WORKSPACE/out/vc_render-Windows-x64.zip" "./build/Release/vc_render.exe"
+          cd "$GITHUB_WORKSPACE/out"
+          git init -q -b builds
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add .
+          git commit -qm "Plugin builds ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" builds
+
+      - name: Upload logs on failure
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-logs
+          retention-days: 3
+          path: |
+            configure.log
+            build.log
+            tests.log
+            selfcheck.log
+            build/CMakeFiles/CMakeConfigureLog.yaml
