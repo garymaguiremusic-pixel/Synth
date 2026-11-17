@@ -15,7 +15,7 @@ namespace
 {
     constexpr int kWidth = VCClonePanel::kBaseWidth, kHeight = VCClonePanel::kBaseHeight;
     constexpr int kTopH = 36, kTabsY = 40, kTabsH = 24, kContentY = 68;
-    constexpr int kBottomY = 568;
+    constexpr int kBottomY = 730;
     constexpr int kStripH = 104, kStripY = kBottomY - kStripH - 6;
     constexpr int kRowH = 88, kRowGap = 4, kHeaderH = 16, kCellH = 64;
     const char* kPageNames[] = { "Synth", "Mod", "Matrix", "Arp", "FX", "Browser" };
@@ -429,87 +429,121 @@ int VCClonePanel::addHeaderGroup (int mode, StringArray labels)
 
 bool VCClonePanel::sectionVisible (const Section& s) const
 {
-    if (currentPage != PageSynth || s.mode != currentMode()) return false;
+    if (currentPage != PageSynth || (s.mode >= 0 && s.mode != currentMode())) return false;
+    if (s.tab >= 0 && s.tab != displayTab) return false;
     return s.group < 0 || groups[(size_t) s.group]->selected == s.groupIndex;
 }
 
 void VCClonePanel::buildSynthPages()
 {
-    // columns: oscillators | filters + LFOs | envelopes + global filter | global / voice
-    constexpr float top = (float) kContentY, bottom = (float) kBottomY - 2.0f, gap = 4.0f;
-    constexpr float oscX = 6.0f, oscW = 372.0f, midX = oscX + oscW + 5.0f, midW = 318.0f;
-    constexpr float envX = midX + midW + 5.0f, envW = 290.0f, gX = envX + envW + 5.0f, gW = (float) kWidth - 6.0f - gX;
+    // Rows: [Osc 1 | Amp Env | Osc 2] [Osc 3 | Filter Env | Osc 4] [Filters | display (Arp, Distortion, Delay, Reverb) | Global filter + Voice]
+    //       [modulation along the bottom]
+    constexpr float L = 6.0f, R = (float) kWidth - 6.0f, gap = 4.0f;
+    constexpr float oscW = 444.0f, oscH = 116.0f, midH = 300.0f;
+    constexpr float rowA = (float) kContentY, rowB = rowA + oscH + gap, rowC = rowB + oscH + gap, rowD = rowC + midH + gap;
+    constexpr float botH = (float) kBottomY - 2.0f - rowD;
+    constexpr float cX = L + oscW + gap, cW = R - oscW - gap - cX;
+    constexpr float sideW = 280.0f, dispX = L + sideW + gap, dispW = R - sideW - gap - dispX;
+    displayArea = { dispX, rowC, dispW, midH };
+    const Rectangle<float> osc1 { L, rowA, oscW, oscH }, osc2 { R - oscW, rowA, oscW, oscH };
+    const Rectangle<float> osc3 { L, rowB, oscW, oscH }, osc4 { R - oscW, rowB, oscW, oscH };
+    const Rectangle<float> ampEnv { cX, rowA, cW, oscH }, fltEnv { cX, rowB, cW, oscH };
+    const Rectangle<float> leftMid { L, rowC, sideW, midH }, rightMid { R - sideW, rowC, sideW, midH };
     using AP = std::unique_ptr<ParamAdapter>;
     using List = std::vector<AP>;
-    auto column = [&] (float x, float w, std::vector<float> heights)
+    auto stack = [&] (Rectangle<float> area, std::vector<float> weights)
     {
         std::vector<Rectangle<float>> r;
-        float total = 0; for (auto h : heights) total += h;
-        const float scale = (bottom - top - gap * (float) (heights.size() - 1)) / total;
-        float y = top;
-        for (auto h : heights) { r.push_back ({ x, y, w, h * scale }); y += h * scale + gap; }
+        float total = 0; for (auto w : weights) total += w;
+        const float scale = (area.getHeight() - gap * (float) (weights.size() - 1)) / total;
+        float y = area.getY();
+        for (auto w : weights) { r.push_back ({ area.getX(), y, area.getWidth(), w * scale }); y += w * scale + gap; }
+        return r;
+    };
+    auto bottom = [&] (int n)
+    {
+        std::vector<Rectangle<float>> r;
+        const float w = (R - L - gap * (float) (n - 1)) / (float) n;
+        for (int i = 0; i < n; ++i) r.push_back ({ L + (w + gap) * (float) i, rowD, w, botH });
         return r;
     };
     auto list = [] (auto&&... a) { List v; (v.push_back (std::move (a)), ...); return v; };
     auto cut = [] (AP a, const char* label = "Cutoff") -> AP { return a ? std::make_unique<CutoffAdapter> (std::move (a), label) : nullptr; };
     auto H = [this] (const char* id, const char* label) -> AP { return host (id, label); };
 
-    // the envelope / global filter column and the global column are the same in every mode
-    auto envColumn = [&] (int M)
+    // shared per mode: the global envelopes, the global filter and the voice block
+    auto shared = [&] (int M, List voice)
     {
-        const auto r = column (envX, envW, { 1, 1, 1.06f });
-        addEnvSection (M, "Amp Env", r[0], list (H (gid::ampA, "A"), H (gid::ampD, "D"), H (gid::ampS, "S"), H (gid::ampR, "R"),
-                                                 H (gid::ampSync, "Sync"), H (gid::useGlobalEnv, "Global")));
-        addEnvSection (M, "Filter Env", r[1], list (H (gid::fltA, "A"), H (gid::fltD, "D"), H (gid::fltS, "S"), H (gid::fltR, "R"),
-                                                    H (gid::fltSync, "Sync")));
-        addSection (M, "Global Filter", r[2], H (gid::filterMode, "Type"), cut (H (gid::cutoff, "Cutoff")),
-                    list (H (gid::reso, "Res"), H (gid::envAmt, "Env"), H (gid::keytrack, "Key"), H (gid::velocity, "Velocity")));
+        addEnvSection (M, "Amp Env", ampEnv, list (H (gid::ampA, "A"), H (gid::ampD, "D"), H (gid::ampS, "S"), H (gid::ampR, "R"),
+                                                   H (gid::ampSync, "Sync"), H (gid::useGlobalEnv, "Global")));
+        addEnvSection (M, "Filter Env", fltEnv, list (H (gid::fltA, "A"), H (gid::fltD, "D"), H (gid::fltS, "S"), H (gid::fltR, "R"),
+                                                      H (gid::fltSync, "Sync")));
+        const auto r = stack (rightMid, { 1.0f, 1.0f });
+        addSection (M, "Global Filter", r[0], H (gid::filterMode, "Type"), cut (H (gid::cutoff, "Cutoff")),
+                    list (H (gid::reso, "Res"), H (gid::envAmt, "Env"), H (gid::keytrack, "Key"), H (gid::velocity, "Vel")));
+        voice.insert (voice.begin(), H (gid::reverbOn, "Reverb"));
+        voice.insert (voice.begin(), H (gid::delayOn, "Delay"));
+        voice.insert (voice.begin(), H (gid::volume, "Volume"));
+        addSection (M, "Voice / FX", r[1], nullptr, nullptr, std::move (voice));
     };
-    auto globalColumn = [&] (int M, List voice)
+
+    // ---- the centre display: Arp, Distortion, Delay, Reverb (same in every mode) ------------
     {
-        const auto r = column (gX, gW, { 1, 1 });
-        addSection (M, "Global", r[0], nullptr, nullptr,
-                    list (H (gid::volume, "Volume"), H (gid::satDrive, "Drive"), H (gid::satMix, "Sat Mix"),
-                          H (gid::delayOn, "Delay"), H (gid::reverbOn, "Reverb")));
-        addSection (M, "Voice", r[1], nullptr, nullptr, std::move (voice));
-    };
+        const auto inner = displayArea.reduced (6.0f).withTrimmedTop (24.0f);
+        auto& arp = addSection (-1, "Step Sequencer", inner.withHeight (22.0f), H (gid::arpMode, "Arp"), nullptr, {});
+        arp.tab = 0;
+        auto& dist = addSection (-1, "Distortion (Virus Saturation)", inner.withSizeKeepingCentre (inner.getWidth() * 0.7f, 120.0f), nullptr, nullptr,
+                                 list (H (gid::satCurve, "Curve"), H (gid::satDrive, "Drive"), H (gid::satMix, "Mix")));
+        dist.tab = 1;
+        const char* tabNames[] = { "ARP", "DISTORT", "DELAY", "REVERB" };
+        for (int i = 0; i < 4; ++i)
+        {
+            auto& t = displayTabs[(size_t) i];
+            t.setButtonText (tabNames[i]);
+            t.onClick = [this, i] { displayTab = i; updateVisibility(); repaint(); };
+            addChildComponent (t);
+        }
+    }
 
     // ---- Virus -------------------------------------------------------------------------------
     {
         constexpr int M = (int) vc::SynthMode::Virus;
         auto V = [this] (int o, const char* l = "") -> AP
         { return VCCloneAudioProcessor::isHostParameter (o) ? virus (o, l) : nullptr; };
-        const auto o = column (oscX, oscW, { 1.0f, 1.25f, 0.82f, 0.96f });
-        addSection (M, "Osc 1", o[0], nullptr, nullptr,
+        addSection (M, "Osc 1", osc1, nullptr, nullptr,
                     list (V (Osc1_Wave_Select, "Wave"), V (Osc1_Shape, "Shape"), V (Osc1_Pulsewidth), V (Osc1_Semitone, "Semi"),
                           V (Osc1_Keyfollow, "Key"), V (Osc1_Shape_Velocity)));
-        addSection (M, "Osc 2", o[1], nullptr, nullptr,
+        addSection (M, "Osc 2", osc2, nullptr, nullptr,
                     list (V (Osc2_Wave_Select, "Wave"), V (Osc2_Shape, "Shape"), V (Osc2_Pulsewidth), V (Osc2_Semitone, "Semi"),
                           V (Osc2_Detune, "Detune"), V (Osc2_FM_Amount), V (Osc_FM_Mode), V (Osc2_Sync, "Sync"), V (Osc2_Filt_Env_Amt),
                           V (FM_Filt_Env_Amt), V (Osc2_Keyfollow, "Key"), V (Osc2_Shape_Velocity), V (Fm_Amount_Velocity)));
-        addSection (M, "Osc 3", o[2], nullptr, nullptr,
-                    list (V (Osc3_Mode, "Mode"), V (Osc3_Volume, "Level"), V (Osc3_Semitone, "Semi"), V (Osc3_Detune, "Detune")));
-        addSection (M, "Osc Common / Noise", o[3], nullptr, nullptr,
-                    list (V (Osc_Balance), V (Osc_Mainvolume), V (Suboscillator_Volume), V (Suboscillator_Shape), V (Ringmodulator_Volume),
-                          V (Noise_Volume), V (Noise_Color), V (Osc_Init_Phase), V (PulseWidth_Velocity)));
-        const auto m = column (midX, midW, { 1, 1, 1.03f, 1.03f });
-        addSection (M, "Filter 1", m[0], V (Filter1_Mode, "Mode"), cut (V (Cutoff)),
+        addSection (M, "Osc 3", osc3, nullptr, nullptr,
+                    list (V (Osc3_Mode, "Mode"), V (Osc3_Volume, "Level"), V (Osc3_Semitone, "Semi"), V (Osc3_Detune, "Detune"),
+                          V (Osc_Balance), V (Osc_Mainvolume), V (Osc_Init_Phase)));
+        addSection (M, "Sub / Noise / Ring", osc4, nullptr, nullptr,
+                    list (V (Suboscillator_Volume), V (Suboscillator_Shape), V (Ringmodulator_Volume), V (Noise_Volume), V (Noise_Color),
+                          V (PulseWidth_Velocity)));
+        const auto f = stack (leftMid, { 1, 1 });
+        addSection (M, "Filter 1", f[0], V (Filter1_Mode, "Mode"), cut (V (Cutoff)),
                     list (V (Filter1_Resonance, "Res"), V (Filter1_Env_Amt, "Env"), V (Filter1_Keyfollow, "Key"),
                           V (Filter1_Env_Polarity, "Pol"), V (Filter_Routing, "Routing"), V (Filter_Balance, "Balance")));
-        addSection (M, "Filter 2", m[1], V (Filter2_Mode, "Mode"), cut (V (Cutoff2), "Cutoff 2"),
+        addSection (M, "Filter 2", f[1], V (Filter2_Mode, "Mode"), cut (V (Cutoff2), "Cutoff 2"),
                     list (V (Filter2_Resonance, "Res"), V (Filter2_Env_Amt, "Env"), V (Filter2_Keyfollow, "Key"),
                           V (Filter2_Env_Polarity, "Pol"), V (Filter2_Cutoff_Link, "Link")));
-        addSection (M, "LFO 1", m[2], nullptr, nullptr,
-                    list (V (Lfo1_Shape, "Shape"), V (Lfo1_Rate, "Rate"), V (Lfo1_Clock, "Clock"), V (Lfo1_Mode, "Mode"),
-                          V (Lfo1_Symmetry, "Symm"), V (Lfo1_Keytrigger, "Key Trig"), V (Lfo1_Env_Mode, "Env"),
-                          V (Osc1_Lfo1_Amount, "Osc 1"), V (Osc2_Lfo1_Amount, "Osc 2")));
-        addSection (M, "LFO 2", m[3], nullptr, nullptr,
-                    list (V (Lfo2_Shape, "Shape"), V (Lfo2_Rate, "Rate"), V (Lfo2_Clock, "Clock"), V (Lfo2_Mode, "Mode"),
-                          V (Lfo2_Symmetry, "Symm"), V (Lfo2_Keytrigger, "Key Trig"), V (Lfo2_Env_Mode, "Env"),
-                          V (Cutoff1_Lfo2_Amount, "Cut 1"), V (Cutoff2_Lfo2_Amount, "Cut 2")));
-        envColumn (M);
-        globalColumn (M, list (V (Patch_Volume, "Patch Vol"), V (Portamento_Time, "Glide"), V (Unison_Mode, "Unison"),
-                               V (Unison_Detune, "Detune"), V (Key_Mode, "Key Mode"), V (Punch_Intensity, "Punch")));
+        const auto b = bottom (4);
+        addSection (M, "LFO 1", b[0], nullptr, nullptr,
+                    list (V (Lfo1_Shape, "Shape"), V (Lfo1_Rate, "Rate"), V (Lfo1_Clock, "Clock"), V (Lfo1_Symmetry, "Symm"),
+                          V (Lfo1_Keytrigger, "Key Trig"), V (Osc1_Lfo1_Amount, "Osc 1"), V (Osc2_Lfo1_Amount, "Osc 2")));
+        addSection (M, "LFO 2", b[1], nullptr, nullptr,
+                    list (V (Lfo2_Shape, "Shape"), V (Lfo2_Rate, "Rate"), V (Lfo2_Clock, "Clock"), V (Lfo2_Symmetry, "Symm"),
+                          V (Lfo2_Keytrigger, "Key Trig"), V (Cutoff1_Lfo2_Amount, "Cut 1"), V (Cutoff2_Lfo2_Amount, "Cut 2")));
+        addSection (M, "LFO 3", b[2], nullptr, nullptr,
+                    list (V (Lfo3_Shape, "Shape"), V (Lfo3_Rate, "Rate"), V (Lfo3_Clock, "Clock"), V (Lfo3_Destination, "Dest"),
+                          V (Osc_Lfo3_Amount, "Amount"), V (Lfo3_Fade_In_Time, "Fade")));
+        addSection (M, "Unison", b[3], nullptr, nullptr,
+                    list (V (Unison_Mode, "Voices"), V (Unison_Detune, "Detune"), V (Unison_Pan_Spread, "Spread"), V (Unison_Lfo_Phase, "LFO Phs"),
+                          V (Punch_Intensity, "Punch")));
+        shared (M, list (V (Patch_Volume, "Patch Vol"), V (Portamento_Time, "Glide"), V (Key_Mode, "Key Mode"), V (Amp_Velocity, "Velocity")));
     }
 
     // ---- Sylenth -----------------------------------------------------------------------------
@@ -517,37 +551,58 @@ void VCClonePanel::buildSynthPages()
         using namespace vc::sylenth;
         constexpr int M = (int) vc::SynthMode::Sylenth;
         auto S = [this] (int i, const char* l) -> AP { return std::make_unique<SylenthAdapter> (processor, i, l); };
-        const auto o = column (oscX, oscW, { 1, 1, 1, 1 });
+        const Rectangle<float> pos[4] = { osc1, osc2, osc3, osc4 };
         const char* names[] = { "Osc A1", "Osc A2", "Osc B1", "Osc B2" };
         for (int k = 0; k < 4; ++k)
         {
             const int b = OscBase + k * OscStride;
-            addSection (M, names[k], o[(size_t) k], S (b + oWave, "Wave"), nullptr,
+            addSection (M, names[k], pos[k], S (b + oWave, "Wave"), nullptr,
                         list (S (b + oVoices, "Voices"), S (b + oOctave, "Octave"), S (b + oNote, "Note"), S (b + oFine, "Fine"),
-                              S (b + oDetune, "Detune"), S (b + oStereo, "Stereo"), S (b + oVolume, "Level"), S (b + oPan, "Pan"),
-                              S (b + oPhase, "Phase"), S (b + oRetrig, "Retrig"), S (b + oInvert, "Invert")));
+                              S (b + oVolume, "Volume"), S (b + oPhase, "Phase"), S (b + oDetune, "Detune"), S (b + oStereo, "Stereo"),
+                              S (b + oPan, "Pan"), S (b + oInvert, "Inv"), S (b + oRetrig, "Retrig")));
         }
-        const auto m = column (midX, midW, { 1, 1, 0.98f, 1.08f });
-        for (int f = 0; f < 2; ++f)
+        const auto f = stack (leftMid, { 1, 1, 1 });
+        for (int k = 0; k < 2; ++k)
         {
-            const int b = f == 0 ? FiltA : FiltB;
-            addSection (M, f == 0 ? "Filter A" : "Filter B", m[(size_t) f], S (b, "Type"), cut (S (b + 2, "Cutoff")),
-                        list (S (b + 3, "Res"), S (b + 4, "Drive"), S (b + 1, "Slope"), S (f == 0 ? FiltAInput : FiltBInput, "Input")));
+            const int b = k == 0 ? FiltA : FiltB;
+            addSection (M, k == 0 ? "Filter A" : "Filter B", f[(size_t) k], S (b, "Type"), cut (S (b + 2, "Cutoff")),
+                        list (S (b + 3, "Res"), S (b + 4, "Drive"), S (b + 1, "Slope"), S (k == 0 ? FiltAInput : FiltBInput, "Input")));
         }
-        addSection (M, "Filter Control / Mix", m[2], nullptr, cut (S (FCtl, "Cutoff")),
-                    list (S (FCtl + 1, "Res"), S (FCtl + 3, "Key"), S (FCtl + 2, "Warm"), S (MixA, "Mix A"), S (MixB, "Mix B"), S (Solo, "Solo")));
+        addSection (M, "Filter Control", f[2], nullptr, cut (S (FCtl, "Cutoff")),
+                    list (S (FCtl + 1, "Res"), S (FCtl + 3, "Key"), S (FCtl + 2, "Warm"), S (MixA, "Mix A"), S (MixB, "Mix B")));
+        const auto bt = bottom (4);
+        const int eg = addHeaderGroup (M, { "1", "2" });
+        for (int e = 0; e < 2; ++e)
+        {
+            const int b = e == 0 ? Mod1 : Mod2;
+            addSection (M, "Mod Env", bt[0], nullptr, nullptr,
+                        list (S (b, "A"), S (b + 1, "D"), S (b + 2, "S"), S (b + 3, "R"), S (b + 4, "Dest 1"), S (b + 5, "Amt 1"),
+                              S (b + 6, "Dest 2"), S (b + 7, "Amt 2")), eg, e);
+        }
         const int lg = addHeaderGroup (M, { "1", "2" });
         for (int l = 0; l < 2; ++l)
         {
             const int b = l == 0 ? Lfo1 : Lfo2;
-            addSection (M, "LFO", m[3], nullptr, nullptr,
+            addSection (M, "LFO", bt[1], nullptr, nullptr,
                         list (S (b, "Wave"), S (b + 1, "Rate"), S (b + 2, "Sync"), S (l == 0 ? Lfo1Free : Lfo2Free, "Free"), S (b + 3, "Gain"),
-                              S (b + 4, "Offset"), S (b + 5, "Dest 1"), S (b + 6, "Amt 1"), S (b + 7, "Dest 2"), S (b + 8, "Amt 2")),
-                        lg, l);
+                              S (b + 4, "Offset"), S (b + 5, "Dest 1"), S (b + 6, "Amt 1"), S (b + 7, "Dest 2"), S (b + 8, "Amt 2")), lg, l);
         }
-        envColumn (M);
-        globalColumn (M, list (S (MainVol, "Volume"), S (Mono, "Mono"), S (Legato, "Legato"), S (Porta, "Glide"),
-                               S (PortaMode, "Porta Mode"), S (Polyphony, "Voices"), S (BendRange, "Bend")));
+        const int mg = addHeaderGroup (M, { "1A", "1B", "2A", "2B" });
+        for (int m = 0; m < 4; ++m)
+        {
+            const int b = Misc + m * 5;
+            addSection (M, "Misc", bt[2], nullptr, nullptr,
+                        list (S (b, "Source"), S (b + 1, "Dest 1"), S (b + 2, "Amt 1"), S (b + 3, "Dest 2"), S (b + 4, "Amt 2")), mg, m);
+        }
+        const int ag = addHeaderGroup (M, { "A", "B" });
+        for (int k = 0; k < 2; ++k)
+        {
+            const int b = k == 0 ? AmpA : AmpB;
+            addSection (M, "Patch Amp Env", bt[3], nullptr, nullptr,
+                        list (S (b, "A"), S (b + 1, "D"), S (b + 2, "S"), S (b + 3, "R"), S (Solo, "Solo")), ag, k);
+        }
+        shared (M, list (S (MainVol, "Main Vol"), S (Polyphony, "Voices"), S (BendRange, "Bend"), S (Porta, "Glide"),
+                         S (PortaMode, "Porta"), S (Mono, "Mono"), S (Legato, "Legato")));
     }
 
     // ---- Spire -------------------------------------------------------------------------------
@@ -556,46 +611,53 @@ void VCClonePanel::buildSynthPages()
         auto P = [this] (int i, const char* l, SpK k, StringArray items = {}) -> AP
         { return std::make_unique<SpireAdapter> (processor, i, l, k, items); };
         const auto waves = spWaves();
-        const auto o = column (oscX, oscW, { 1, 1, 1, 1 });
+        const Rectangle<float> pos[4] = { osc1, osc2, osc3, osc4 };
         const int mixIdx[4] = { sp::mix_osc1, sp::mix_osc2, sp::mix_osc3, sp::mix_osc4 };
         const int muteIdx[4] = { sp::osc1_mute, sp::osc2_mute, sp::osc3_mute, sp::osc4_mute };
         for (int k = 0; k < 4; ++k)
         {
             const int b = sp::osc1_type + k * 19;
-            addSection (M, "Osc " + String (k + 1), o[(size_t) k], P (b, "Type", SpK::List, kSpOscTypes), nullptr,
+            addSection (M, "Osc " + String (k + 1), pos[k], P (b, "Type", SpK::List, kSpOscTypes), nullptr,
                         list (P (b + 7, "Wave", SpK::List, waves), P (b + 1, "Octave", SpK::Octave), P (b + 2, "Note", SpK::Semitone),
                               P (b + 3, "Fine", SpK::Signed), P (b + 4, "Ctrl A", SpK::Knob1000), P (b + 5, "Ctrl B", SpK::Knob1000),
-                              P (b + 8, "Wt Mix", SpK::Knob1000), P (b + 11, "Voices", SpK::List, kSpUnison),
-                              P (b + 9, "Detune", SpK::Knob1000), P (b + 10, "Width", SpK::Knob1000), P (b + 13, "Density", SpK::Knob1000),
-                              P (b + 12, "Chord", SpK::List, kSpChords), P (b + 14, "Pan", SpK::Signed), P (b + 18, "To Flt", SpK::Knob1000),
-                              P (mixIdx[k], "Level", SpK::Knob1000), P (muteIdx[k], "Mute", SpK::Flag)));
+                              P (b + 8, "Wt Mix", SpK::Knob1000), P (mixIdx[k], "Level", SpK::Knob1000),
+                              P (b + 11, "Voices", SpK::List, kSpUnison), P (b + 9, "Detune", SpK::Knob1000), P (b + 10, "Width", SpK::Knob1000),
+                              P (b + 13, "Density", SpK::Knob1000), P (b + 12, "Chord", SpK::List, kSpChords), P (b + 14, "Pan", SpK::Signed),
+                              P (b + 18, "To Flt", SpK::Knob1000), P (muteIdx[k], "Mute", SpK::Flag)));
         }
-        const auto m = column (midX, midW, { 1, 1, 0.8f, 1.25f });
-        addSection (M, "Filter 1", m[0], P (sp::flt1_type, "Type", SpK::List, kSpFltTypes), cut (P (sp::flt1_cut, "Cutoff", SpK::Knob1000)),
+        const auto f = stack (leftMid, { 1, 1 });
+        addSection (M, "Filter 1", f[0], P (sp::flt1_type, "Type", SpK::List, kSpFltTypes), cut (P (sp::flt1_cut, "Cutoff", SpK::Knob1000)),
                     list (P (sp::flt1_res, "Res", SpK::Knob1000), P (sp::flt1_mode, "Mode", SpK::List, kSpFltModes)));
-        addSection (M, "Filter 2", m[1], P (sp::flt2_type, "Type", SpK::List, kSpFltTypes), cut (P (sp::flt2_cut, "Cutoff", SpK::Knob1000)),
+        addSection (M, "Filter 2", f[1], P (sp::flt2_type, "Type", SpK::List, kSpFltTypes), cut (P (sp::flt2_cut, "Cutoff", SpK::Knob1000)),
                     list (P (sp::flt2_res, "Res", SpK::Knob1000), P (sp::flt2_mode, "Mode", SpK::List, kSpFltModes)));
-        addSection (M, "Filter Routing", m[2], nullptr, nullptr,
-                    list (P (sp::flt_rout, "Parallel", SpK::Flag), P (sp::flt_link, "Link", SpK::Flag),
-                          P (sp::flt_balance, "Balance", SpK::Knob1000), P (sp::flt_keytrack, "Key", SpK::Signed)));
+        const auto bt = bottom (4);
         const auto targets = spTargets();
+        const int eg = addHeaderGroup (M, { "1", "2", "3", "4" });
+        for (int e = 0; e < 4; ++e)
+        {
+            const int b = sp::env1_att + e * 16;
+            addSection (M, "Env", bt[0], nullptr, nullptr,
+                        list (P (b, "A", SpK::Knob1000), P (b + 1, "D", SpK::Knob1000), P (b + 2, "S", SpK::Knob1000), P (b + 5, "R", SpK::Knob1000),
+                              P (b + 10, "Target 1", SpK::List, targets), P (b + 11, "Amt 1", SpK::Signed),
+                              P (b + 13, "Target 2", SpK::List, targets), P (b + 14, "Amt 2", SpK::Signed)), eg, e);
+        }
         const int lg = addHeaderGroup (M, { "1", "2", "3", "4" });
         for (int l = 0; l < 4; ++l)
         {
             const int b = sp::lfo1_rate + l * 16;
-            addSection (M, "LFO", m[3], nullptr, nullptr,
+            addSection (M, "LFO", bt[1], nullptr, nullptr,
                         list (P (b + 7, "Form", SpK::List, spLfoForms()), P (b, "Rate", SpK::Knob1000), P (b + 3, "Sync", SpK::Flag),
-                              P (b + 4, "Mono", SpK::Flag), P (b + 2, "Symm", SpK::Signed), P (b + 8, "Amp", SpK::Knob1000),
-                              P (b + 6, "Phase", SpK::Knob1000), P (b + 9, "Fade", SpK::Knob1000),
-                              P (b + 10, "Target 1", SpK::List, targets), P (b + 11, "Amt 1", SpK::Signed),
-                              P (b + 13, "Target 2", SpK::List, targets), P (b + 14, "Amt 2", SpK::Signed)),
-                        lg, l);
+                              P (b + 2, "Symm", SpK::Signed), P (b + 8, "Amp", SpK::Knob1000), P (b + 10, "Target 1", SpK::List, targets),
+                              P (b + 11, "Amt 1", SpK::Signed), P (b + 13, "Target 2", SpK::List, targets), P (b + 14, "Amt 2", SpK::Signed)), lg, l);
         }
-        envColumn (M);
-        globalColumn (M, list (P (sp::volume, "Volume", SpK::Knob1000), P (sp::mode, "Mode", SpK::List, kSpVoice),
-                               P (sp::poly, "Voices", SpK::List, kSpPoly), P (sp::glide, "Glide", SpK::Knob1000),
-                               P (sp::bend_up, "Bend Up", SpK::List, kSpBend), P (sp::bend_dn, "Bend Dn", SpK::List, kSpBend),
-                               P (sp::velocity, "Velocity", SpK::Knob1000), P (sp::drift, "Drift", SpK::Knob1000)));
+        addSection (M, "Filter Routing", bt[2], nullptr, nullptr,
+                    list (P (sp::flt_rout, "Parallel", SpK::Flag), P (sp::flt_link, "Link", SpK::Flag),
+                          P (sp::flt_balance, "Balance", SpK::Knob1000), P (sp::flt_keytrack, "Key", SpK::Signed)));
+        addSection (M, "Character", bt[3], nullptr, nullptr,
+                    list (P (sp::drift, "Drift", SpK::Knob1000), P (sp::velocity, "Velocity", SpK::Knob1000),
+                          P (sp::bend_up, "Bend Up", SpK::List, kSpBend), P (sp::bend_dn, "Bend Dn", SpK::List, kSpBend)));
+        shared (M, list (P (sp::volume, "Spire Vol", SpK::Knob1000), P (sp::mode, "Mode", SpK::List, kSpVoice),
+                         P (sp::poly, "Voices", SpK::List, kSpPoly), P (sp::glide, "Glide", SpK::Knob1000)));
     }
 }
 
@@ -623,8 +685,13 @@ void VCClonePanel::layoutSections()
         }
         if (sec.env)
         {
-            const float rowH = jmin (50.0f, body.getHeight() * 0.36f);
-            sec.env->setBounds (body.removeFromTop (body.getHeight() - rowH - 2.0f).toNearestInt());
+            if (body.getWidth() > body.getHeight() * 2.0f)     // wide block: graph left, controls right
+                sec.env->setBounds (body.removeFromLeft (body.getWidth() * 0.55f).toNearestInt()), body.removeFromLeft (4.0f);
+            else
+            {
+                const float rowH = jmin (50.0f, body.getHeight() * 0.36f);
+                sec.env->setBounds (body.removeFromTop (body.getHeight() - rowH - 2.0f).toNearestInt());
+            }
         }
         if (sec.hero)
         {
@@ -725,9 +792,8 @@ VCClonePanel::VCClonePanel (VCCloneAudioProcessor& p) : processor (p)
     // Gary's plugins, embedded
     delayPanel = vendor::createVirusDelayPanel (processor.delayProcessor());
     reverbPanel = vendor::createLeadVerbPanel (processor.reverbProcessor());
-    melodyPanel = vendor::createMelodyMagicPanel (processor.melodyProcessor());
     stepGrid = processor.stepSequencer().createPanel();
-    for (auto* c : { delayPanel.get(), reverbPanel.get(), melodyPanel.get(), stepGrid.get() }) addChildComponent (*c);
+    for (auto* c : { delayPanel.get(), reverbPanel.get(), stepGrid.get() }) addChildComponent (*c);
 
     patchList.setRowHeight (20);
     patchList.setColour (ListBox::backgroundColourId, Colour (0xff15181b));
@@ -767,7 +833,6 @@ bool VCClonePanel::panelVisible (const Panel& p) const
     if (p.page != currentPage) return false;
     if (p.mode >= 0 && p.mode != currentMode()) return false;
     if (p.group >= 0 && groups[(size_t) p.group]->selected != p.groupIndex) return false;
-    if (p.page == PageArp && p.title.startsWith ("Step")) return roundToInt (processor.apvts.getRawParameterValue (gid::arpMode)->load()) == 2;
     return true;
 }
 
@@ -845,10 +910,28 @@ void VCClonePanel::layoutAll()
 
 void VCClonePanel::layoutEmbedded()
 {
+    const auto dSize = vendor::virusDelayPanelSize(), rSize = vendor::leadVerbPanelSize();
+    if (currentPage == PageSynth)
+    {
+        // inside the centre display: one panel at a time, under the display tabs
+        const auto inner = displayArea.reduced (6.0f).withTrimmedTop (24.0f);
+        auto fit = [&] (Component& c, Point<int> size, Rectangle<float>& area)
+        {
+            const float s = jmin (inner.getWidth() / (float) size.x, inner.getHeight() / (float) size.y);
+            area = Rectangle<float> (size.x * s, size.y * s).withCentre (inner.getCentre());
+            c.setBounds (0, 0, size.x, size.y);
+            c.setTransform (AffineTransform::scale (s).translated (area.getX(), area.getY()));
+        };
+        fit (*delayPanel, dSize, delayArea);
+        fit (*reverbPanel, rSize, reverbArea);
+        gridArea = inner.withTrimmedTop (26.0f);
+        stepGrid->setTransform ({});
+        stepGrid->setBounds (gridArea.reduced (4.0f).toNearestInt());
+        return;
+    }
     // FX page: the delay and reverb panels side by side under the saturation / FX row
     const float top = (float) kContentY + kRowH + kRowGap;
     const float availH = (float) kBottomY - top - 6.0f, availW = (float) kWidth - 16.0f - 6.0f;
-    const auto dSize = vendor::virusDelayPanelSize(), rSize = vendor::leadVerbPanelSize();
     const float s = jmin (availW / (float) (dSize.x + rSize.x), availH / (float) jmax (dSize.y, rSize.y));
     delayArea = { 8.0f, top, dSize.x * s, dSize.y * s };
     reverbArea = { 8.0f + dSize.x * s + 6.0f, top, rSize.x * s, rSize.y * s };
@@ -857,13 +940,9 @@ void VCClonePanel::layoutEmbedded()
     reverbPanel->setBounds (0, 0, rSize.x, rSize.y);
     reverbPanel->setTransform (AffineTransform::scale (s).translated (reverbArea.getX(), reverbArea.getY()));
 
-    // Arp page: MelodyMagic (scaled) or the step grid
-    const auto mSize = vendor::melodyMagicPanelSize();
-    const float ms = jmin (((float) kWidth - 16.0f) / (float) mSize.x, availH / (float) mSize.y);
-    melodyArea = { ((float) kWidth - mSize.x * ms) * 0.5f, top, mSize.x * ms, mSize.y * ms };
-    melodyPanel->setBounds (0, 0, mSize.x, mSize.y);
-    melodyPanel->setTransform (AffineTransform::scale (ms).translated (melodyArea.getX(), melodyArea.getY()));
-    gridArea = { 8.0f, top, (float) kWidth - 16.0f, jmin (availH, 330.0f) };
+    // Arp page: the step sequencer grid
+    gridArea = { 8.0f, top, (float) kWidth - 16.0f, jmin (availH, 420.0f) };
+    stepGrid->setTransform ({});
     stepGrid->setBounds (gridArea.reduced (8.0f, 8.0f).withTrimmedTop (14.0f).toNearestInt());
 }
 
@@ -909,10 +988,20 @@ void VCClonePanel::updateVisibility()
         }
     }
     const int arpMode = roundToInt (processor.apvts.getRawParameterValue (gid::arpMode)->load());
-    delayPanel->setVisible (currentPage == PageFx);
-    reverbPanel->setVisible (currentPage == PageFx);
-    melodyPanel->setVisible (currentPage == PageArp && arpMode == 1);
-    stepGrid->setVisible (currentPage == PageArp && arpMode == 2);
+    layoutEmbedded();
+    const bool synth = currentPage == PageSynth;
+    delayPanel->setVisible (currentPage == PageFx || (synth && displayTab == 2));
+    reverbPanel->setVisible (currentPage == PageFx || (synth && displayTab == 3));
+    stepGrid->setVisible (currentPage == PageArp || (synth && displayTab == 0));
+    for (int i = 0; i < 4; ++i)
+    {
+        auto& t = displayTabs[(size_t) i];
+        t.setVisible (synth);
+        t.setToggleState (i == displayTab, dontSendNotification);
+        const float w = 86.0f;
+        t.setBounds (Rectangle<float> (displayArea.getX() + 8.0f + (float) i * (w + 3.0f), displayArea.getY() + 4.0f, w, 20.0f).toNearestInt());
+    }
+    (void) arpMode;
     patchList.setVisible (currentPage == PageBrowser);
     infoText.setVisible (currentPage == PageBrowser);
     for (int i = 0; i < 3; ++i) modeButtons[(size_t) i].setToggleState (i == currentMode(), dontSendNotification);
@@ -1011,6 +1100,13 @@ void VCClonePanel::paint (Graphics& g)
     for (auto& p : panels)
         if (panelVisible (p)) CustomLookAndFeel::drawPanel (g, p.bounds, p.title);
 
+    if (currentPage == PageSynth)
+    {
+        // the centre display: a recessed screen with the tab strip
+        CustomLookAndFeel::drawPanel (g, displayArea, {});
+        CustomLookAndFeel::drawInsetBox (g, displayArea.reduced (4.0f).withTrimmedTop (22.0f), 4.0f);
+
+    }
     for (auto& sec : sections)
         if (sectionVisible (sec))
         {
@@ -1034,21 +1130,15 @@ void VCClonePanel::paint (Graphics& g)
             CustomLookAndFeel::drawInsetBox (g, gr->area.toFloat().expanded (2.0f), 3.0f);
 
     const int arpMode = roundToInt (processor.apvts.getRawParameterValue (gid::arpMode)->load());
-    if (currentPage == PageFx)
+    if (currentPage == PageFx || (currentPage == PageSynth && displayTab >= 2))
     {
-        CustomLookAndFeel::drawInsetBox (g, delayArea.expanded (2.0f), 3.0f);
-        CustomLookAndFeel::drawInsetBox (g, reverbArea.expanded (2.0f), 3.0f);
+        CustomLookAndFeel::drawInsetBox (g, (displayTab == 3 && currentPage == PageSynth ? reverbArea : delayArea).expanded (2.0f), 3.0f);
+        if (currentPage == PageFx)
+            CustomLookAndFeel::drawInsetBox (g, reverbArea.expanded (2.0f), 3.0f);
     }
     if (currentPage == PageArp)
     {
-        if (arpMode == 2) CustomLookAndFeel::drawPanel (g, gridArea, "Steps (ArpSampler)");
-        if (arpMode == 0)
-        {
-            g.setColour (VirusColours::labelText);
-            g.setFont (CustomLookAndFeel::uiFont (13.0f, true));
-            g.drawText ("Arp section is off. Choose Arp (MelodyMagic) or Step Seq (ArpSampler) above.",
-                        Rectangle<int> (0, kContentY + 120, kWidth, 30), Justification::centred);
-        }
+        CustomLookAndFeel::drawPanel (g, gridArea, "Step Sequencer");
     }
     if (currentPage == PageBrowser)
     {

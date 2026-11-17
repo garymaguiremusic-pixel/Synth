@@ -82,7 +82,7 @@ AudioProcessorValueTreeState::ParameterLayout VCCloneAudioProcessor::createLayou
     }
     intP (gid::satDrive, "Saturation Drive", 0, 127, 40);
     intP (gid::satMix, "Saturation Mix", 0, 127, 127);
-    choiceP (gid::arpMode, "Arp Section", { "Off", "Arp (MelodyMagic)", "Step Seq (ArpSampler)" }, 0);
+    choiceP (gid::arpMode, "Arp (Step Sequencer)", { "Off", "On" }, 0);
     boolP (gid::delayOn, "Delay On", false);
     boolP (gid::reverbOn, "Reverb On", false);
     intP (gid::volume, "Master Volume", 0, 127, 100);
@@ -128,7 +128,6 @@ VCCloneAudioProcessor::VCCloneAudioProcessor()
 
     delay = vendor::createVirusDelay();
     reverb = vendor::createLeadVerb();
-    melody = vendor::createMelodyMagic();
     patchName = "Init";
 }
 
@@ -145,7 +144,7 @@ void VCCloneAudioProcessor::prepareToPlay (double sr, int block)
     sampleRate = sr;
     inst.prepare (sr, block);
     stepSeq.prepare (sr);
-    for (auto* p : { delay.get(), reverb.get(), melody.get() })
+    for (auto* p : { delay.get(), reverb.get() })
     {
         p->setRateAndBufferSizeDetails (sr, block);
         p->prepareToPlay (sr, block);
@@ -158,7 +157,7 @@ void VCCloneAudioProcessor::reset()
 {
     inst.reset();
     stepSeq.reset();
-    for (auto* p : { delay.get(), reverb.get(), melody.get() }) p->reset();
+    for (auto* p : { delay.get(), reverb.get() }) p->reset();
 }
 
 vc::SynthMode VCCloneAudioProcessor::getMode() const
@@ -293,13 +292,6 @@ void VCCloneAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer
     // --- arp section ------------------------------------------------------------------
     const int arpMode = roundToInt (apvts.getRawParameterValue (gid::arpMode)->load());
     if (arpMode == 1)
-    {
-        melody->setPlayHead (getPlayHead());
-        scratch.setSize (2, numSamples, false, false, true);
-        scratch.clear();
-        melody->processBlock (scratch, midi);          // MelodyMagic replaces the keys with its notes
-    }
-    else if (arpMode == 2)
         stepSeq.process (midi, numSamples, getPlayHead(), bpm);
 
     // --- synth ------------------------------------------------------------------------
@@ -455,7 +447,7 @@ void VCCloneAudioProcessor::loadPatch (const vc::SinglePatch& p)
         for (auto& r : rates) if (std::abs (std::log (r.b / beats)) < best) { best = std::abs (std::log (r.b / beats)); rate = r.idx; type = r.type; }
     }
     stepSeq.loadPlainArp (am != 0, kModeMap[std::clamp (am, 0, 6)], std::clamp (p.value (Arp_Octave_Range) + 1, 1, 4), rate, type);
-    setParamValue (gid::arpMode, am != 0 ? 2.0f : 0.0f);
+    setParamValue (gid::arpMode, am != 0 ? 1.0f : 0.0f);
 
     patchName = p.name();
     ++bankVersion;
@@ -488,7 +480,7 @@ void VCCloneAudioProcessor::loadAnyPatch (const vc::AnyPatch& a)
             for (auto& s : st.steps) steps.push_back ({ s.transpose, s.velocity, s.tie });
             stepSeq.loadPatchSteps (steps, st.arpOn, st.mode, st.octaves, st.rateIndex, st.rateType,
                                     (float) (st.gate * 100.0), (float) (st.swing * 100.0), st.velocityMode, st.length);
-            setParamValue (gid::arpMode, st.arpOn ? 2.0f : 0.0f);
+            setParamValue (gid::arpMode, st.arpOn ? 1.0f : 0.0f);
             setMode (vc::SynthMode::Spire);
             patchName = a.name;
             break;
@@ -511,7 +503,7 @@ void VCCloneAudioProcessor::loadAnyPatch (const vc::AnyPatch& a)
                 stepSeq.loadPatchSteps (steps, st.arpOn, st.mode, st.octaves, st.rateIndex, st.rateType,
                                         (float) (st.gate * 100.0), (float) (st.swing * 100.0), st.velocityMode, st.length);
             }
-            setParamValue (gid::arpMode, st.arpOn ? 2.0f : 0.0f);
+            setParamValue (gid::arpMode, st.arpOn ? 1.0f : 0.0f);
             setMode (vc::SynthMode::Sylenth);
             patchName = a.name;
             break;
@@ -651,7 +643,6 @@ void VCCloneAudioProcessor::getStateInformation (MemoryBlock& dest)
     xml.setAttribute ("spire", floatsToBase64 (sp.data(), sp.size()));
     xml.setAttribute ("delay", processorState (*delay));
     xml.setAttribute ("reverb", processorState (*reverb));
-    xml.setAttribute ("melody", processorState (*melody));
     if (auto seqXml = stepSeq.saveState().createXml()) xml.addChildElement (new XmlElement (*seqXml));
     if (auto g = apvts.copyState().createXml()) xml.addChildElement (g.release());
     copyXmlToBinary (xml, dest);
@@ -676,7 +667,6 @@ void VCCloneAudioProcessor::setStateInformation (const void* data, int size)
     sylenthDirty = spireDirty = true;
     restoreProcessor (*delay, xml->getStringAttribute ("delay"));
     restoreProcessor (*reverb, xml->getStringAttribute ("reverb"));
-    restoreProcessor (*melody, xml->getStringAttribute ("melody"));
 
     MemoryOutputStream mo;
     if (Base64::convertFromBase64 (mo, xml->getStringAttribute ("patch")) && mo.getDataSize() == 256)

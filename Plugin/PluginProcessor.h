@@ -16,7 +16,7 @@
 /**
     VC-Clone: three synth modes (Virus, Sylenth, Spire) sharing one global section.
 
-      MIDI -> [Arp: Off | MelodyMagic | ArpSampler step sequencer] -> active synth mode
+      MIDI -> [Arp: ArpSampler step sequencer, On/Off] -> active synth mode
            -> global filter + Filter/Amp ADSR (per voice) -> saturation -> Virus Delay -> LeadVerb
 
     Host parameters: the Virus patch bytes (as before) and the global section (prefix "g_").
@@ -95,7 +95,6 @@ public:
     // global FX and arp section (their own processors and panels)
     juce::AudioProcessor& delayProcessor() { return *delay; }
     juce::AudioProcessor& reverbProcessor() { return *reverb; }
-    juce::AudioProcessor& melodyProcessor() { return *melody; }
     vendor::StepSequencer& stepSequencer() { return stepSeq; }
 
     // GUI feedback
@@ -131,7 +130,7 @@ private:
     juce::AbstractFifo ccFifo { 512 };
     std::array<std::pair<int, int>, 512> ccQueue {};
 
-    std::unique_ptr<juce::AudioProcessor> delay, reverb, melody;
+    std::unique_ptr<juce::AudioProcessor> delay, reverb;
     vendor::StepSequencer stepSeq;
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer emptyMidi;

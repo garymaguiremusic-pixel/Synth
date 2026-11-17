@@ -8,14 +8,14 @@
 #include "UI/SynthWidgets.h"
 
 //==============================================================================
-/** The whole user interface at its base size (1100 x 600); the editor scales it. */
+/** The whole user interface at its base size (1200 x 760); the editor scales it. */
 class VCClonePanel : public juce::Component,
                      public juce::FileDragAndDropTarget,
                      private juce::Timer,
                      private juce::ListBoxModel
 {
 public:
-    static constexpr int kBaseWidth = 1100, kBaseHeight = 600;
+    static constexpr int kBaseWidth = 1200, kBaseHeight = 760;
 
     explicit VCClonePanel (VCCloneAudioProcessor&);
     ~VCClonePanel() override;
@@ -61,6 +61,7 @@ private:
         std::vector<Control*> controls;
         EnvelopeGraph* env = nullptr;
         int group = -1, groupIndex = 0;           // alternatives share one block (LFO 1..4)
+        int tab = -1;                             // shown only on this tab of the centre display
     };
     struct Group
     {
@@ -123,11 +124,14 @@ private:
     std::vector<Panel> panels;
     std::vector<std::unique_ptr<Group>> groups;
     std::vector<Section> sections;
+    std::array<juce::TextButton, 4> displayTabs;  // Arp, Distortion, Delay, Reverb
+    int displayTab = 0;
+    juce::Rectangle<float> displayArea;
     std::vector<std::unique_ptr<EnvelopeGraph>> envGraphs;
 
     // embedded panels from Gary's plugins
-    std::unique_ptr<juce::Component> delayPanel, reverbPanel, melodyPanel, stepGrid;
-    juce::Rectangle<float> delayArea, reverbArea, melodyArea, gridArea;
+    std::unique_ptr<juce::Component> delayPanel, reverbPanel, stepGrid;
+    juce::Rectangle<float> delayArea, reverbArea, gridArea;
 
     juce::ListBox patchList { "patches", this };
     juce::TextEditor infoText;

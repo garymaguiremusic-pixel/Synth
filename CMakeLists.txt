@@ -158,29 +158,17 @@ if(VCCLONE_BUILD_PLUGIN)
         Plugin/UI/SynthWidgets.cpp
         Plugin/VendorDelay.cpp
         Plugin/VendorReverb.cpp
-        Plugin/VendorMelody.cpp
         Plugin/VendorStepSeq.cpp)
     target_sources(VCClone PRIVATE ${VCCLONE_PLUGIN_SOURCES})
 
     target_include_directories(VCClone PRIVATE Plugin)
 
-    # Gary's Virus Delay and LeadVerb plugins as the global FX (see ThirdParty/README.md)
-    include(cmake/vendor.cmake)
     # Gary's plugins as the global FX and arp sections (see ThirdParty/README.md)
     include(cmake/vendor.cmake)
     function(vc_add_all_vendors target)
         vc_add_vendor(${target} ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/VirusDelay vd ${VC_VD_RENAMES})
         vc_add_vendor(${target} ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/LeadVerb lv ${VC_LV_RENAMES})
-        vc_add_vendor(${target} ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/MelodyMagic mm ${VC_MM_RENAMES})
         vc_add_vendor(${target} ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/ArpSampler as ${VC_AS_RENAMES})
-        target_include_directories(${target} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/MelodyMagic/core/include)
-        # MelodyMagic is C++17 code: keep u8string() returning std::string in its files
-        file(GLOB_RECURSE mm_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/MelodyMagic/*.cpp)
-        if(MSVC)
-            set_source_files_properties(${mm_sources} TARGET_DIRECTORY ${target} PROPERTIES COMPILE_OPTIONS "/Zc:char8_t-")
-        else()
-            set_source_files_properties(${mm_sources} TARGET_DIRECTORY ${target} PROPERTIES COMPILE_OPTIONS "-fno-char8_t")
-        endif()
     endfunction()
     vc_add_all_vendors(VCClone)
 

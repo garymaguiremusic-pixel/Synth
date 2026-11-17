@@ -1,15 +1,10 @@
 #pragma once
-// Global arp section: Gary's MelodyMagic (whole plugin: MIDI in -> MIDI out, with its panel) and
-// ArpSampler's step sequencer (its ArpEngine, pattern model and step grid; no sampler).
+// Global arp section: ArpSampler's step sequencer (its ArpEngine, pattern model and step grid; no sampler).
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <memory>
 
 namespace vendor
 {
-    std::unique_ptr<juce::AudioProcessor> createMelodyMagic();
-    std::unique_ptr<juce::Component> createMelodyMagicPanel (juce::AudioProcessor&);
-    juce::Point<int> melodyMagicPanelSize();
-
     /** ArpSampler's arp + step sequencer as a MIDI processor. */
     class StepSequencer
     {

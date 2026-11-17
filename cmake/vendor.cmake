@@ -15,6 +15,4 @@ set(VC_VD_RENAMES CustomLookAndFeel VirusColours VirusKnob KnobAttachment LcdDis
     TempoField HelpButton HelpOverlay createPluginFilter)
 set(VC_LV_RENAMES CustomLookAndFeel VirusColours VirusKnob KnobAttachment LcdDisplay ReverbVisualizer
     TempoField HelpButton HelpOverlay createPluginFilter)
-set(VC_MM_RENAMES CustomLookAndFeel VirusColours VirusKnob KnobAttachment LcdDisplay HelpButton HelpOverlay
-    DragMidiHandle createPluginFilter)
 set(VC_AS_RENAMES CustomLookAndFeel VirusColours VirusKnob KnobAttachment LcdDisplay HelpButton TempoField)
