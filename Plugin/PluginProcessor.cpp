@@ -86,6 +86,11 @@ AudioProcessorValueTreeState::ParameterLayout VCCloneAudioProcessor::createLayou
     boolP (gid::delayOn, "Delay On", false);
     boolP (gid::reverbOn, "Reverb On", false);
     intP (gid::volume, "Master Volume", 0, 127, 100);
+    auto hzText = [] (int v) { return v == 0 ? String ("Off") : String (v) + " Hz"; };
+    intP (gid::monoHz, "Mono (below)", 0, 200, 0, hzText);
+    intP (gid::lockHz, "Phase Lock (below)", 0, 200, 0, hzText);
+    for (int o = 0; o < 4; ++o) boolP (gid::oscOn[o], ("Osc " + String (o + 1) + " On").toRawUTF8(), true);
+    for (int o = 0; o < 3; ++o) boolP (gid::virusRetrig[o], ("Virus Osc " + String (o + 1) + " Retrig").toRawUTF8(), false);
 
     // Virus patch bytes
     const auto init = vc::makeInitPatch();
@@ -141,6 +146,8 @@ bool VCCloneAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) 
 
 void VCCloneAudioProcessor::prepareToPlay (double sr, int block)
 {
+    heldNow.reserve (128);
+    { const juce::SpinLock::ScopedLockType l (heldLock); lastHeld.reserve (128); }
     sampleRate = sr;
     inst.prepare (sr, block);
     stepSeq.prepare (sr);
@@ -233,6 +240,10 @@ void VCCloneAudioProcessor::updateGlobalParams()
     g.saturationDrive = raw (gid::satDrive) / 127.0;
     g.saturationMix = raw (gid::satMix) / 127.0;
     g.volume = std::pow (raw (gid::volume) / 100.0, 2.0);
+    g.monoHz = raw (gid::monoHz);
+    g.lockHz = raw (gid::lockHz);
+    for (int o = 0; o < 4; ++o) g.oscOn[(size_t) o] = raw (gid::oscOn[o]) > 0.5f;
+    for (int o = 0; o < 3; ++o) g.virusRetrig[(size_t) o] = raw (gid::virusRetrig[o]) > 0.5f;
 }
 
 void VCCloneAudioProcessor::syncModeEngines()
@@ -288,6 +299,21 @@ void VCCloneAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer
             if (auto b = pos->getBpm()) bpm = *b;
     currentBpm = bpm;
     inst.setTempo (bpm);
+
+    // remember the keys being played (Drag MIDI renders the chord you last held)
+    for (const auto m : midi)
+    {
+        const auto msg = m.getMessage();
+        if (msg.isNoteOn())
+        {
+            heldNow.erase (std::remove (heldNow.begin(), heldNow.end(), msg.getNoteNumber()), heldNow.end());
+            heldNow.push_back (msg.getNoteNumber());
+            const juce::SpinLock::ScopedTryLockType l (heldLock);
+            if (l.isLocked()) lastHeld = heldNow;
+        }
+        else if (msg.isNoteOff())
+            heldNow.erase (std::remove (heldNow.begin(), heldNow.end(), msg.getNoteNumber()), heldNow.end());
+    }
 
     // --- arp section ------------------------------------------------------------------
     const int arpMode = roundToInt (apvts.getRawParameterValue (gid::arpMode)->load());
@@ -593,13 +619,45 @@ const String VCCloneAudioProcessor::getProgramName (int index)
 
 bool VCCloneAudioProcessor::exportCurrent (const File& f) const
 {
-    auto p = currentPatch();
-    const auto bytes = f.hasFileExtension ("mid") ? vc::makeSmf ({ p }, false) : vc::makeSingleDump (p, 0, 0);
-    return vc::writeFile (f.getFullPathName().toStdString(), bytes);
+    // the format of the synth mode that is loaded
+    switch (getMode())
+    {
+        case vc::SynthMode::Sylenth:
+        {
+            std::array<float, vc::SylenthEngine::kNumParams> a {};
+            for (size_t i = 0; i < a.size(); ++i) a[i] = sylenthValues[i].load();
+            const auto bytes = vc::writeSylenthFxp (vc::SylenthEngine::toSylenthPreset (a, sylenthRaw), patchName.toStdString());
+            return ! bytes.empty() && vc::writeFile (f.getFullPathName().toStdString(), bytes);
+        }
+        case vc::SynthMode::Spire:
+        {
+            std::vector<std::pair<std::string, float>> values;
+            for (int i = 0; i < vc::spire::kNumParams; ++i)
+                values.push_back ({ String (vc::spire::kParams[i].key).replace ("(inferred)", "").toStdString(), spireValues[(size_t) i].load() });
+            return f.replaceWithText (String::fromUTF8 (vc::writeSpirePreset (values, patchName.toStdString()).c_str()));
+        }
+        case vc::SynthMode::Virus:
+        default:
+        {
+            auto p = currentPatch();
+            const auto bytes = f.hasFileExtension ("mid") ? vc::makeSmf ({ p }, false) : vc::makeSingleDump (p, 0, 0);
+            return vc::writeFile (f.getFullPathName().toStdString(), bytes);
+        }
+    }
 }
 
 bool VCCloneAudioProcessor::exportBank (const File& f) const
 {
+    if (getMode() == vc::SynthMode::Sylenth)
+    {
+        std::vector<std::vector<float>> presets;
+        std::vector<std::string> names;
+        for (auto& a : bank)
+            if (a.type == vc::PatchType::Sylenth) { presets.push_back (a.sylenth.values); names.push_back (a.name); }
+        if (presets.empty()) return exportCurrent (f.withFileExtension ("fxp"));
+        const auto bytes = vc::writeSylenthFile (presets, names, true);
+        return ! bytes.empty() && vc::writeFile (f.getFullPathName().toStdString(), bytes);
+    }
     std::vector<vc::SinglePatch> virus;
     for (auto& a : bank) if (a.type == vc::PatchType::Virus) virus.push_back (a.virus);
     if (virus.empty()) return exportCurrent (f);

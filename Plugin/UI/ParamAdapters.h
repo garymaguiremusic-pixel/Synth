@@ -148,3 +148,29 @@ private:
     std::unique_ptr<ParamAdapter> inner;
     juce::String label;
 };
+
+/** Octave view of a semitone control (Virus Osc Semitone): one step = one octave, the note within the
+    octave is kept. Range -4 .. +4 octaves around the centre value. */
+class OctaveAdapter : public ParamAdapter
+{
+public:
+    OctaveAdapter (std::unique_ptr<ParamAdapter> a, int centre) : inner (std::move (a)), centre (centre) {}
+    int minimum() const override { return -4; }
+    int maximum() const override { return 4; }
+    int defaultValue() const override { return 0; }
+    int get() const override { return (int) std::floor ((inner->get() - centre + 6) / 12.0); }
+    void set (int k) override
+    {
+        const int rel = inner->get() - centre - 12 * get();
+        inner->set (juce::jlimit (inner->minimum(), inner->maximum(), centre + 12 * juce::jlimit (-4, 4, k) + rel));
+    }
+    juce::String text (int v) const override { return (v > 0 ? "+" : "") + juce::String (v); }
+    juce::String name() const override { return "Octave"; }
+    void beginGesture() override { inner->beginGesture(); }
+    void endGesture() override { inner->endGesture(); }
+    juce::RangedAudioParameter* hostParameter() const override { return inner->hostParameter(); }
+
+private:
+    std::unique_ptr<ParamAdapter> inner;
+    int centre;
+};

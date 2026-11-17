@@ -2,6 +2,8 @@
 // Global arp section: ArpSampler's step sequencer (its ArpEngine, pattern model and step grid; no sampler).
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <memory>
+#include <functional>
+#include <vector>
 
 namespace vendor
 {
@@ -27,6 +29,13 @@ namespace vendor
         void loadPlainArp (bool arpOn, int mode, int octaves, int rateIndex, int rateType);
 
         std::unique_ptr<juce::Component> createPanel();
+
+        /** ArpSampler's randomiser with its settings (density, range, ties, velocity...) and the scale lock. */
+        void randomise();
+        /** Renders the sequence to a temporary .mid file (ArpSampler's exporter). */
+        juce::File exportMidi (double bpm, const std::vector<int>& heldNotes) const;
+        /** ArpSampler's "Drag MIDI" grip. */
+        static std::unique_ptr<juce::Component> createDragHandle (std::function<juce::File()> makeFile);
 
         juce::ValueTree saveState() const;
         void loadState (const juce::ValueTree&);

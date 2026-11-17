@@ -178,10 +178,11 @@ void SpireEngine::startVoice (Voice& v, int note, float vel, bool legato)
             auto& osc = v.osc[(size_t) o];
             osc.count = count;
             const int phaseIdx = listIndex (p (base + 6));
+            const bool lockPhase = global && global->lockHz >= 1.0;
             for (int u = 0; u < kMaxUnison; ++u)
             {
                 auto& un = osc.u[(size_t) u];
-                un.phase = phaseIdx > 0 ? phaseIdx / 999.0 : v.rng.uniform();   // 0 = free (random start)
+                un.phase = phaseIdx > 0 || lockPhase ? phaseIdx / 999.0 : v.rng.uniform();   // 0 = free (random start)
                 un.phase2 = un.phase;
                 un.fb = 0;
             }
@@ -248,7 +249,7 @@ void SpireEngine::controlVoice (Voice& v)
         const double lvl = v.env[(size_t) e].level;
         for (int t = 0; t < 2; ++t)
         {
-            const int tgt = listIndex (p (base + 10 + t * 3));
+            const int tgt = targetFromStored (listIndex (p (base + 10 + t * 3)));
             if (tgt == 0) continue;
             const double amt = (p (base + 11 + t * 3) - 0.5) * 2.0;
             const double velAmt = (p (base + 12 + t * 3) - 0.5) * 2.0;
@@ -261,7 +262,7 @@ void SpireEngine::controlVoice (Voice& v)
         const double val = v.lfo[(size_t) l].value;
         for (int t = 0; t < 2; ++t)
         {
-            const int tgt = listIndex (p (base + 10 + t * 3));
+            const int tgt = targetFromStored (listIndex (p (base + 10 + t * 3)));
             if (tgt == 0) continue;
             apply (tgt, val * (p (base + 11 + t * 3) - 0.5) * 2.0);
         }
@@ -292,13 +293,13 @@ void SpireEngine::controlVoice (Voice& v)
     for (int s = 0; s < 15; ++s)
     {
         const int base = slot1_Src1 + s * 10;
-        const int s1 = listIndex (p (base)), s2 = listIndex (p (base + 1));
+        const int s1 = sourceFromStored (listIndex (p (base))), s2 = sourceFromStored (listIndex (p (base + 1)));
         if (s1 == 0 && s2 == 0) continue;
         double src = s1 ? source (s1) : 1.0;
         if (s2) src *= source (s2);
         for (int t = 0; t < 4; ++t)
         {
-            const int tgt = listIndex (p (base + 3 + t * 2));
+            const int tgt = targetFromStored (listIndex (p (base + 3 + t * 2)));
             if (tgt) apply (tgt, src * (p (base + 2 + t * 2) - 0.5) * 2.0);
         }
     }
@@ -362,7 +363,15 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
                 lf.value = val * std::max (0.0, p (base + 8) * 2.0 + v.mod[(size_t) lfoTarget (l, LAmp)]) * lf.fade;
             }
             controlVoice (v);
-            if (global) v.gstage.control (*global, sr, 32);
+            if (global)
+            {
+                v.gstage.control (*global, sr, 32);
+                if (global->lockHz >= 1.0)
+                {
+                    for (auto& a : v.lockX) for (auto& x : a) x.set (global->lockHz, sr);
+                    for (auto& a : v.lockC) for (auto& x : a) x.set (global->lockHz, sr);
+                }
+            }
 
             // filters
             for (int f = 0; f < 2; ++f)
@@ -396,10 +405,10 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
         const double amp = ampOverride ? gAmp : env1;
 
         // oscillators
-        double inF1L = 0, inF1R = 0, inF2L = 0, inF2R = 0;
+        double inF1L = 0, inF1R = 0, inF2L = 0, inF2R = 0, lk1L = 0, lk1R = 0, lk2L = 0, lk2R = 0;
         for (int o = 0; o < 4; ++o)
         {
-            if (flag (p (osc1_mute + o))) continue;
+            if (flag (p (osc1_mute + o)) || (global && ! global->oscOn[(size_t) o])) continue;
             const double level = std::clamp (p (mix_osc1 + o) + v.mod[(size_t) (TOscAmp + o)], 0.0, 1.0);
             if (level <= 0.0) continue;
             const int base = osc1_type + o * kOscStride;
@@ -426,7 +435,8 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
             const auto& chordNotes = kChords[(size_t) std::clamp (chord, 0, (int) kChords.size() - 1)];
             const int waveIdx = wave <= 1 ? wave : 2 + (wave - 2) % 62;
 
-            double sumL = 0, sumR = 0, norm = 0;
+            double sumL = 0, sumR = 0, norm = 0, cL = 0, cR = 0;
+            const int centre = (count - 1) / 2;
             for (int u = 0; u < count; ++u)
             {
                 auto& un = osc.u[(size_t) u];
@@ -502,9 +512,13 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
                 sumL += s * g * std::cos ((up + 1.0) * kPi * 0.25);
                 sumR += s * g * std::sin ((up + 1.0) * kPi * 0.25);
                 norm += g * g;
+                if (u == centre) { cL = s * std::cos ((pan + 1.0) * kPi * 0.25); cR = s * std::sin ((pan + 1.0) * kPi * 0.25); }
             }
             const double scale = inv * level / std::sqrt (std::max (1.0, norm));
             sumL *= scale; sumR *= scale;
+            cL *= inv * level; cR *= inv * level;
+            if (rout == 0) { lk1L += cL; lk1R += cR; }
+            else { lk1L += cL * (1.0 - mixto); lk1R += cR * (1.0 - mixto); lk2L += cL * mixto; lk2R += cR * mixto; }
             if (rout == 0) { inF1L += sumL; inF1R += sumR; }
             else { inF1L += sumL * (1.0 - mixto); inF1R += sumR * (1.0 - mixto); inF2L += sumL * mixto; inF2R += sumR * mixto; }
         }
@@ -564,6 +578,14 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
                 default: return x;
             }
         };
+        if (v.gstage.lockOn())
+        {
+            // Phase Lock: below the crossover only each oscillator's centre unison voice plays
+            inF1L = v.lockX[0][0].high (inF1L) + v.lockC[0][0].low (lk1L);
+            inF1R = v.lockX[0][1].high (inF1R) + v.lockC[0][1].low (lk1R);
+            inF2L = v.lockX[1][0].high (inF2L) + v.lockC[1][0].low (lk2L);
+            inF2R = v.lockX[1][1].high (inF2R) + v.lockC[1][1].low (lk2R);
+        }
         double l, r;
         if (rout == 0)
         {

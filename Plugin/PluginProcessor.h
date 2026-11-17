@@ -26,6 +26,8 @@ class VCCloneAudioProcessor : public juce::AudioProcessor,
                               private juce::AsyncUpdater
 {
 public:
+    /** The keys most recently held (in press order), for the arp's MIDI export. */
+    std::vector<int> getLastHeldNotes() const { const juce::SpinLock::ScopedLockType l (heldLock); return lastHeld; }
     VCCloneAudioProcessor();
     ~VCCloneAudioProcessor() override;
 
@@ -133,6 +135,9 @@ private:
     std::unique_ptr<juce::AudioProcessor> delay, reverb;
     vendor::StepSequencer stepSeq;
     juce::AudioBuffer<float> scratch;
+    // keys played (for "Drag MIDI": the arp renders the chord you last held)
+    std::vector<int> heldNow, lastHeld;
+    mutable juce::SpinLock heldLock;
     juce::MidiBuffer emptyMidi;
     double sampleRate = 44100.0;
     int lastLatency = -1;
@@ -168,4 +173,8 @@ namespace gid
     inline constexpr const char* delayOn = "g_delay_on";
     inline constexpr const char* reverbOn = "g_reverb_on";
     inline constexpr const char* volume = "g_volume";
+    inline constexpr const char* monoHz = "g_mono_hz";
+    inline constexpr const char* lockHz = "g_lock_hz";
+    inline constexpr const char* oscOn[4] = { "g_osc1_on", "g_osc2_on", "g_osc3_on", "g_osc4_on" };
+    inline constexpr const char* virusRetrig[3] = { "g_vretrig1", "g_vretrig2", "g_vretrig3" };
 }

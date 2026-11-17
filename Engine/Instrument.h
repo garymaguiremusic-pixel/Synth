@@ -61,6 +61,10 @@ struct GlobalParams
     int saturationCurve = 0;             // Virus saturation list (0 = off)
     double saturationDrive = 0.3, saturationMix = 1.0;
     double volume = 1.0;
+    double monoHz = 0.0;                 // Mono: below this the output is summed to mono (0 = off)
+    double lockHz = 0.0;                 // Phase Lock (see GlobalVoiceSettings)
+    std::array<bool, 4> oscOn { true, true, true, true };
+    std::array<bool, 3> virusRetrig { false, false, false };
 };
 
 class Instrument
@@ -104,6 +108,8 @@ private:
     std::unique_ptr<SpireEngine> spireEngine;
     std::array<ModeEngine*, 3> engines {};
     SynthMode modeIndex = SynthMode::Virus;
+    LR4 monoL, monoR;
+    double monoSetHz = -1, sampleRate = 44100;
     GlobalVoiceSettings voiceSettings;
     GlobalSaturation saturation;
     double bpm = 120.0;

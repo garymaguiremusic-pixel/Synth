@@ -63,6 +63,7 @@ void GlobalVoiceStage::start (int n, float v, const GlobalVoiceSettings& s, doub
     if (fromZero)
     {
         svfL.reset(); svfR.reset(); ladL.reset(); ladR.reset();
+        for (auto* x : { &lockXL, &lockXR, &lockCL, &lockCR }) x->reset();
     }
     lastSr = 0;
     control (s, sr, 1);
@@ -72,6 +73,13 @@ void GlobalVoiceStage::control (const GlobalVoiceSettings& s, double sr, int)
 {
     ampEnv.setTimes (s.amp, sr);
     filtEnv.setTimes (s.filter, sr);
+    if (s.lockHz >= 1.0)
+    {
+        if (std::abs (s.lockHz - lockHz) > 0.01 || sr != lastLockSr)
+            for (auto* x : { &lockXL, &lockXR, &lockCL, &lockCR }) x->set (s.lockHz, sr);
+        lastLockSr = sr;
+    }
+    lockHz = s.lockHz;
     mode = std::clamp (s.filterMode, 0, 8);
     if (mode == 0)
         return;

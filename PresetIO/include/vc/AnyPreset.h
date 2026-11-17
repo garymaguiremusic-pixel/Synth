@@ -39,6 +39,13 @@ struct AnyImport
 };
 
 AnyImport importAnyData (const uint8_t* data, size_t size, const std::string& fileName);
+
+/** A Sylenth1 program file (.fxp, FPCh chunk "1lys" + zlib payload): 244 values in Sylenth's VST order. */
+std::vector<uint8_t> writeSylenthFxp (const std::vector<float>& values, const std::string& name);
+/** Several Sylenth1 programs: a program file (.fxp, one) or a bank (.fxb, FBCh). */
+std::vector<uint8_t> writeSylenthFile (const std::vector<std::vector<float>>& presets, const std::vector<std::string>& names, bool bank);
+/** A Spire preset (.spf2 JSON): parameter key -> normalised value, in Spire's parameter order. */
+std::string writeSpirePreset (const std::vector<std::pair<std::string, float>>& values, const std::string& name);
 AnyImport importAnyFile (const std::string& path);
 
 // --- pieces, exposed for tests -------------------------------------------------------------

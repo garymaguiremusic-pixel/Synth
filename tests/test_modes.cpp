@@ -232,3 +232,30 @@ TEST_CASE ("The user's Sylenth bank plays", "[modes][sylenth][user]")
     WARN ("Sylenth bank: " << sounding << " of " << total << " presets sound");
     CHECK (sounding > total * 9 / 10);
 }
+
+TEST_CASE ("Sylenth and Spire files written by VC-Clone read back", "[modes][export]")
+{
+    std::vector<float> v (244);
+    for (size_t i = 0; i < v.size(); ++i) v[i] = (float) i / 300.0f;
+    const auto fxp = vc::writeSylenthFxp (v, "My Lead");
+    auto res = vc::importAnyData (fxp.data(), fxp.size(), "x.fxp");
+    REQUIRE (res.patches.size() == 1);
+    CHECK (res.patches[0].type == vc::PatchType::Sylenth);
+    CHECK (res.patches[0].name == "My Lead");
+    REQUIRE (res.patches[0].sylenth.values.size() == 244);
+    CHECK (res.patches[0].sylenth.values[100] == Approx (v[100]));
+    const auto fxb = vc::writeSylenthFile ({ v, v, v }, { "A", "B", "C" }, true);
+    auto bank = vc::importAnyData (fxb.data(), fxb.size(), "x.fxb");
+    CHECK (bank.patches.size() == 3);
+
+    // the engine's parameters survive Sylenth -> VC-Clone -> Sylenth -> VC-Clone
+    const auto a = vc::SylenthEngine::fromSylenthPreset (v);
+    const auto back = vc::SylenthEngine::fromSylenthPreset (vc::SylenthEngine::toSylenthPreset (a, {}));
+    for (size_t i = 0; i < a.size(); ++i) { INFO ("param " << i); CHECK (back[i] == Approx (a[i]).margin (0.002)); }
+
+    const auto text = vc::writeSpirePreset ({ { "cutoff_1", 0.25f }, { "osc1_type", 0.002002f } }, "Pad");
+    auto sp = vc::importAnyData (reinterpret_cast<const uint8_t*> (text.data()), text.size(), "Pad.spf2");
+    REQUIRE (sp.patches.size() == 1);
+    CHECK (sp.patches[0].type == vc::PatchType::Spire);
+    CHECK (sp.patches[0].spire.at ("cutoff_1") == Approx (0.25f));
+}

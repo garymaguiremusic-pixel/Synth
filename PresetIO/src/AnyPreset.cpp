@@ -328,4 +328,62 @@ AnyImport importAnyFile (const std::string& path)
     if (! data) { AnyImport r; r.error = "Could not read " + path; return r; }
     return importAnyData (data->data(), data->size(), path);
 }
+
+//==============================================================================
+std::vector<uint8_t> writeSylenthFile (const std::vector<std::vector<float>>& presets, const std::vector<std::string>& names, bool bank)
+{
+    auto le32 = [] (std::vector<uint8_t>& v, uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back ((uint8_t) (x >> (8 * i))); };
+    auto be32 = [] (std::vector<uint8_t>& v, uint32_t x) { for (int i = 3; i >= 0; --i) v.push_back ((uint8_t) (x >> (8 * i))); };
+    // payload: "1lys", version, presets, params, 0, then per preset 244 floats + a 36-byte name
+    std::vector<uint8_t> payload { '1', 'l', 'y', 's' };
+    le32 (payload, 3045); le32 (payload, (uint32_t) presets.size()); le32 (payload, 244); le32 (payload, 0);
+    for (size_t k = 0; k < presets.size(); ++k)
+    {
+        std::vector<float> values (presets[k]);
+        values.resize (244, 0.0f);
+        for (float f : values) { uint32_t u; std::memcpy (&u, &f, 4); le32 (payload, u); }
+        const std::string& n = k < names.size() ? names[k] : std::string();
+        for (size_t i = 0; i < 36; ++i) payload.push_back (i < n.size() && i < 35 ? (uint8_t) n[i] : 0);
+    }
+    uLongf zsize = compressBound ((uLong) payload.size());
+    std::vector<uint8_t> z (zsize);
+    if (compress2 (z.data(), &zsize, payload.data(), (uLong) payload.size(), 9) != Z_OK) return {};
+    z.resize (zsize);
+    std::vector<uint8_t> chunk { '1', 'l', 'y', 's' };
+    le32 (chunk, 3045);
+    chunk.insert (chunk.end(), z.begin(), z.end());
+
+    const size_t header = bank ? 160 : 60;
+    std::vector<uint8_t> out { 'C', 'c', 'n', 'K' };
+    be32 (out, (uint32_t) (header - 8 + chunk.size()));
+    out.insert (out.end(), { 'F', bank ? (uint8_t) 'B' : (uint8_t) 'P', 'C', 'h' });
+    be32 (out, bank ? 2 : 1);            // format version
+    be32 (out, 0x73796c31u);             // 'syl1'
+    be32 (out, 1);                       // plugin version
+    be32 (out, (uint32_t) presets.size());
+    if (bank) { be32 (out, 0); out.insert (out.end(), 124, 0); }          // current program + future[124]
+    else { const std::string n = names.empty() ? std::string() : names[0]; for (size_t i = 0; i < 28; ++i) out.push_back (i < n.size() && i < 27 ? (uint8_t) n[i] : 0); }
+    be32 (out, (uint32_t) chunk.size());
+    out.insert (out.end(), chunk.begin(), chunk.end());
+    return out;
+}
+
+std::vector<uint8_t> writeSylenthFxp (const std::vector<float>& values, const std::string& name)
+{
+    return writeSylenthFile ({ values }, { name }, false);
+}
+
+std::string writeSpirePreset (const std::vector<std::pair<std::string, float>>& values, const std::string& name)
+{
+    auto esc = [] (const std::string& t) { std::string r; for (char c : t) { if (c == '"' || c == '\\') r += '\\'; r += c; } return r; };
+    std::string j = "{\n\"author\": \"VC-Clone\",\n\"vendor\": \"\",\n\"bank\": \"VC-Clone\",\n\"notes\": \"" + esc (name) + "\",\n\"tags\": [],\n\"parameters\": {";
+    char buf[64];
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        std::snprintf (buf, sizeof (buf), "%.6f", (double) values[i].second);
+        j += (i ? ",\n" : "\n") + std::string ("\"") + esc (values[i].first) + "\": " + buf;
+    }
+    j += "\n}\n}\n";
+    return j;
+}
 } // namespace vc

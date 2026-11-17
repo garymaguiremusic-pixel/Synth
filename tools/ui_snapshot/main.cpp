@@ -30,7 +30,7 @@ int main (int argc, char** argv)
     auto pump = [] (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); };
     pump (200);
 
-    const juce::StringArray modes { "VIRUS", "SYLENTH", "SPIRE" }, pages { "Synth", "Mod", "Matrix", "Arp", "FX", "Browser" };
+    const juce::StringArray modes { "VIRUS", "SYLENTH", "SPIRE" }, pages { "ARP", "MOD", "MORE", "DISTORT", "DELAY", "REVERB", "Browser" };
     for (int m = 0; m < modes.size(); ++m)
     {
         if (argc > 2 && m != (int) proc->getMode()) continue;     // with a preset: only its mode
@@ -40,8 +40,8 @@ int main (int argc, char** argv)
         for (auto& page : pages)
         {
             if (auto* b = findButton (panel, page); b && b->onClick) b->onClick();
-            if (page == "Arp")
-                if (auto* prm = proc->apvts.getParameter (gid::arpMode)) prm->setValueNotifyingHost (prm->convertTo0to1 (2.0f));
+            if (page == "ARP")
+                if (auto* prm = proc->apvts.getParameter (gid::arpMode)) prm->setValueNotifyingHost (prm->convertTo0to1 (1.0f));
             pump (150);
             auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
             auto f = outDir.getChildFile (modes[m] + "_" + page + ".png");

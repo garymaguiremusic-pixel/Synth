@@ -55,6 +55,13 @@ public:
     static int listIndex (float v) { return (int) (v * 999.99f); }
     static bool flag (float v) { return (int) (v * 1.99f) != 0; }
 
+    // Preset files number targets and sources in Spire's original order; the plugin's own lists (SpireLists.h)
+    // put newer entries in between. Confirmed in Spire: file target 45 = Cutoff_1 (list 50), file source
+    // 17 = ModWheel (list 18). The five newer targets (Osc1-4 Amp, AllOsc Pitch) and Random Unipolar are
+    // assumed to sit at the end of the file order.
+    static int targetFromStored (int s) { return s <= 0 ? 0 : s <= 224 ? s + 5 : s <= 229 ? s - 224 : 0; }
+    static int sourceFromStored (int s) { return s <= 15 ? std::max (0, s) : s <= 29 ? s + 1 : s == 30 ? 16 : s <= 32 ? s : 0; }
+
 public:
     static constexpr int kNumTargets = 230;
 
@@ -76,6 +83,7 @@ private:
         dsp::Ladder lad1[2], lad2[2];
         dsp::DelayLine comb1[2], comb2[2];
         GlobalVoiceStage gstage;
+        LR4 lockX[2][2], lockC[2][2];   // Phase Lock crossovers per filter path / channel
         int ctl = 0;
         double modCut1 = 0, modCut2 = 0, modRes1 = 0, modPitch[4] {}, modVol = 0, modCtrlA[4] {}, modCtrlB[4] {}, modWt[4] {};
         std::array<double, kNumTargets> mod {};    // summed modulation per Spire target (SpireLists.h: targets)

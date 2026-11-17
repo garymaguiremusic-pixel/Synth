@@ -8,14 +8,14 @@
 #include "UI/SynthWidgets.h"
 
 //==============================================================================
-/** The whole user interface at its base size (1200 x 760); the editor scales it. */
+/** The whole user interface at its base size (1200 x 732); the editor scales it. */
 class VCClonePanel : public juce::Component,
                      public juce::FileDragAndDropTarget,
                      private juce::Timer,
                      private juce::ListBoxModel
 {
 public:
-    static constexpr int kBaseWidth = 1200, kBaseHeight = 760;
+    static constexpr int kBaseWidth = 1200, kBaseHeight = 732;
 
     explicit VCClonePanel (VCCloneAudioProcessor&);
     ~VCClonePanel() override;
@@ -57,6 +57,7 @@ private:
         int mode = 0;
         juce::Rectangle<float> bounds;
         Control* header = nullptr;                // segmented selector in the header
+        Control* power = nullptr;                 // on/off button after the title (oscillators)
         Control* hero = nullptr;                  // big knob (cutoff)
         std::vector<Control*> controls;
         EnvelopeGraph* env = nullptr;
@@ -124,8 +125,12 @@ private:
     std::vector<Panel> panels;
     std::vector<std::unique_ptr<Group>> groups;
     std::vector<Section> sections;
-    std::array<juce::TextButton, 4> displayTabs;  // Arp, Distortion, Delay, Reverb
-    int displayTab = 0;
+    enum DisplayTab { TabArp, TabMod, TabDistort, TabDelay, TabReverb, NumDisplayTabs };
+    std::array<juce::TextButton, NumDisplayTabs> displayTabs;
+    std::array<juce::TextButton, 2> modSubButtons;    // MOD tab: Matrix / More
+    int displayTab = TabArp, modSub = 0;
+    juce::TextButton randomiseButton { "Randomise" }, browserButton { "Browser" };
+    std::unique_ptr<juce::Component> dragHandle;
     juce::Rectangle<float> displayArea;
     std::vector<std::unique_ptr<EnvelopeGraph>> envGraphs;
 
@@ -135,7 +140,8 @@ private:
 
     juce::ListBox patchList { "patches", this };
     juce::TextEditor infoText;
-    LcdDisplay lcd, statusLcd;
+    LcdDisplay lcd, statusLcd, soundsetLcd;
+    juce::Rectangle<int> lcdTop;
     HelpButton helpButton;
     HelpOverlay helpOverlay;
     juce::TooltipWindow tooltipWindow { this, 500 };

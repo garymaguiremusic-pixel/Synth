@@ -7,6 +7,9 @@
 #define LcdDisplay as_LcdDisplay
 #define HelpButton as_HelpButton
 #define TempoField as_TempoField
+#include "../ThirdParty/ArpSampler/Arp/Randomiser.h"
+#include "../ThirdParty/ArpSampler/Export/MidiRenderer.h"
+#include "../ThirdParty/ArpSampler/UI/DragMidiHandle.h"
 #include "../ThirdParty/ArpSampler/Parameters.h"
 #include "../ThirdParty/ArpSampler/Arp/ArpEngine.h"
 #include "../ThirdParty/ArpSampler/Arp/PatternModel.h"
@@ -84,6 +87,54 @@ struct StepSequencer::Impl
             p->setValueNotifyingHost (p->convertTo0to1 (value));
     }
 };
+
+void StepSequencer::randomise()
+{
+    auto& d = *impl;
+    auto v = [&] (const char* id) { return d.raw (id); };
+    as::arp::RandomiseSettings r;
+    r.density = v (as::ParamIDs::rndDensity) * 0.01f;
+    r.range = juce::roundToInt (v (as::ParamIDs::rndRange));
+    r.tieProbability = v (as::ParamIDs::rndTieProb) * 0.01f;
+    r.velocityMin = juce::roundToInt (v (as::ParamIDs::rndVelMin));
+    r.velocityMax = juce::roundToInt (v (as::ParamIDs::rndVelMax));
+    r.ratchetProbability = v (as::ParamIDs::rndRatchet) * 0.01f;
+    r.accentProbability = v (as::ParamIDs::rndAccent) * 0.01f;
+    r.scaleLock = v (as::ParamIDs::scaleLock) > 0.5f;
+    r.scaleKey = juce::roundToInt (v (as::ParamIDs::scaleKey));
+    r.scaleIndex = juce::roundToInt (v (as::ParamIDs::scale));
+    const auto seed = (juce::uint32) juce::Random::getSystemRandom().nextInt (999999999) + 1u;
+    d.model.set (as::arp::randomisePattern (d.model.get(), r, seed), true);
+}
+
+juce::File StepSequencer::exportMidi (double bpm, const std::vector<int>& heldNotes) const
+{
+    auto& d = *impl;
+    as::exporter::ExportRequest r;
+    r.settings = d.settings();
+    r.settings.enabled = true;
+    r.pattern = d.model.get();
+    r.bpm = bpm > 0 ? bpm : 120.0;
+    static constexpr int barChoices[] = { 1, 2, 4, 8 };
+    r.bars = barChoices[juce::jlimit (0, 3, juce::roundToInt (d.raw (as::ParamIDs::exportBars)))];
+    const int root = 60 + r.settings.scaleKey;
+    if (r.settings.mode == as::ArpMode::Step)
+        r.input = { { heldNotes.empty() ? root : heldNotes.back(), 100 } };
+    else if (! heldNotes.empty())
+        for (int n : heldNotes) r.input.push_back ({ n, 100 });
+    else
+        for (int i : as::exporter::chordIntervals (juce::roundToInt (d.raw (as::ParamIDs::exportChord))))
+            if (root + i <= 127) r.input.push_back ({ root + i, 100 });
+    return as::exporter::writeToTempFile (as::exporter::renderPattern (r), as::exporter::suggestedName (r).replace ("ArpSampler", "VC-Clone"));
+}
+
+std::unique_ptr<juce::Component> StepSequencer::createDragHandle (std::function<juce::File()> makeFile)
+{
+    auto h = std::make_unique<DragMidiHandle>();
+    h->createFile = std::move (makeFile);
+    h->setTooltip ("Drag the sequence onto a DAW track as a MIDI clip (right-click: save as .mid)");
+    return h;
+}
 
 StepSequencer::StepSequencer() : impl (std::make_unique<Impl>()) { impl->engine.setRandomSeed (1); }
 StepSequencer::~StepSequencer() = default;

@@ -39,6 +39,19 @@ struct GlobalVoiceSettings
     double envAmount = 0.0;              // -64..+63 cutoff steps at full envelope
     double keytrack = 0.0;               // -1..+1 (1 = 100 %)
     double velocity = 0.0;               // -1..+1 velocity -> envelope amount
+    std::array<bool, 4> oscOn { true, true, true, true };   // per-oscillator on/off (Virus: Osc 1, 2, 3, Sub/Noise/Ring)
+    std::array<bool, 3> virusRetrig { false, false, false }; // Virus mode: restart Osc 1..3 at every note
+    double lockHz = 0.0;                 // Phase Lock: below this the unison stack is replaced by one coherent copy (0 = off)
+};
+
+/** Linkwitz-Riley 4th-order crossover (two Butterworth SVF stages per side), as in the Reese plugin. */
+struct LR4
+{
+    dsp::Svf lp1, lp2, hp1, hp2;
+    void set (double hz, double sr) { for (auto* f : { &lp1, &lp2, &hp1, &hp2 }) f->set (hz, 1.41421356, sr); }
+    void reset() { lp1.reset(); lp2.reset(); hp1.reset(); hp2.reset(); }
+    double low (double x) { return lp2.tick (lp1.tick (x).lp).lp; }
+    double high (double x) { return hp2.tick (hp1.tick (x).hp).hp; }
 };
 
 /** Linear-attack / exponential-decay ADSR (the Virus envelope shape), with fixed times. */
@@ -75,11 +88,21 @@ public:
     bool ampActive() const { return ampEnv.active(); }
     /** The global filter on one stereo sample (no-op when off). */
     void filter (double& l, double& r);
+    /** Phase Lock: high band of the full signal + low band of the coherent copy (lockL/R). */
+    void phaseLock (double& l, double& r, double lockL, double lockR)
+    {
+        if (lockHz < 1.0) return;
+        l = lockXL.high (l) + lockCL.low (lockL);
+        r = lockXR.high (r) + lockCR.low (lockR);
+    }
+    bool lockOn() const { return lockHz >= 1.0; }
 
 private:
     Adsr ampEnv, filtEnv;
     dsp::Svf svfL, svfR;
     dsp::Ladder ladL, ladR;
+    LR4 lockXL, lockXR, lockCL, lockCR;
+    double lockHz = 0, lastLockSr = 0;
     int mode = 0, note = 60;
     float vel = 1.0f;
     double lastSr = 0;

@@ -53,6 +53,7 @@ namespace sylenth
         Lfo1Free, Lfo2Free,
         Misc = Lfo2Free + 1,                // 4 x (source dest1 amt1 dest2 amt2): Misc 1A, 1B, 2A, 2B
         FiltAInput = Misc + 20, FiltBInput,
+        Mod1Sync, Mod2Sync,                 // tempo-synced mod envelope times (VC-Clone addition)
         NumParams
     };
 
@@ -98,6 +99,9 @@ public:
         to this engine's parameters, the amp/mod envelope times and the preset's arpeggiator steps. */
     static std::array<float, kNumParams> fromSylenthPreset (const std::vector<float>& raw, PatchSteps* steps = nullptr);
 
+    /** The inverse: this engine's parameters as Sylenth's 244 values (base = the imported values, or empty for Sylenth's defaults). */
+    static std::vector<float> toSylenthPreset (const std::array<float, kNumParams>&, const std::vector<float>& base);
+
     static int listValue (float v, int count) { return std::clamp ((int) (v * (count - 1) + 0.5f), 0, count - 1); }
 
 private:
@@ -113,6 +117,7 @@ private:
         std::array<double, 2> lfoPhase {}, lfoVal {}, lfoSh {}, lfoRateMod {}, lfoGainMod {};
         dsp::Svf fA[2][2], fB[2][2];  // [stage][channel]
         GlobalVoiceStage gstage;
+        LR4 lockX[2][2], lockC[2][2];   // Phase Lock crossovers per part / channel
         int ctl = 0;
         std::array<double, sylenth::DNumDests> mod {};
     };

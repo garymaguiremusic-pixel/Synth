@@ -176,6 +176,15 @@ void Voice::start (Synth& s, int n, float vel, int uIndex, int uCount, double gl
         ph1 = ip; ph2 = initPhase > 0 ? ip : rng.uniform(); ph3 = initPhase > 0 ? ip : rng.uniform();
         subPh = ph1 * 0.5; subOdd = false;
     }
+    // global Retrig buttons (Virus mode) and Phase Lock: start the oscillators at a fixed phase
+    if (s.global)
+    {
+        const bool lock = s.global->lockHz >= 1.0;
+        const double ip = initPhase > 0 ? (initPhase - 1) / 126.0 : 0.0;
+        if (lock || s.global->virusRetrig[0]) { ph1 = ip; subPh = ph1 * 0.5; subOdd = false; }
+        if (lock || s.global->virusRetrig[1]) ph2 = ip;
+        if (lock || s.global->virusRetrig[2]) ph3 = ip;
+    }
 
     // LFO key trigger: 0 = free, otherwise restart at the given phase
     const int ktr[3] = { p.i (Lfo1_Keytrigger), p.i (Lfo2_Keytrigger), 0 };
@@ -562,9 +571,11 @@ void Voice::render (Synth& s, double* L, double* R, int numSamples)
         const double g1 = lerp (prevCtl.g1, ctl.g1), g2 = lerp (prevCtl.g2, ctl.g2);
         const double gMain = lerp (prevCtl.gMain, ctl.gMain);
         const double ring = o1 * o2;
-        const double pathA = g1 * o1 + ctl.gSub * sub;
-        const double pathB = g2 * o2 + ctl.gOsc3 * o3;
-        const double common = ctl.gNoise * noise + ctl.gRing * ring;
+        const double on1 = ! s.global || s.global->oscOn[0] ? 1.0 : 0.0, on2 = ! s.global || s.global->oscOn[1] ? 1.0 : 0.0;
+        const double on3 = ! s.global || s.global->oscOn[2] ? 1.0 : 0.0, on4 = ! s.global || s.global->oscOn[3] ? 1.0 : 0.0;
+        const double pathA = g1 * o1 * on1 + ctl.gSub * sub * on4;
+        const double pathB = g2 * o2 * on2 + ctl.gOsc3 * o3 * on3;
+        const double common = (ctl.gNoise * noise + ctl.gRing * ring) * on4;
 
         // --- filters ---------------------------------------------------------------------------
         const double c1 = lerpLog (prevCtl.cut1, ctl.cut1), c2 = lerpLog (prevCtl.cut2, ctl.cut2);
@@ -630,6 +641,13 @@ void Voice::render (Synth& s, double* L, double* R, int numSamples)
         {
             double gl = out, gr = out;
             gstage.filter (gl, gr);
+            if (gstage.lockOn())
+            {
+                // Phase Lock: only the centre unison voice keeps the low end (no beating below the crossover)
+                const int centre = (unisonCount - 1) / 2;
+                const double keep = unisonIndex == centre ? std::sqrt ((double) unisonCount) : 0.0;
+                gstage.phaseLock (gl, gr, gl * keep, gr * keep);
+            }
             gstage.tickEnvelopes();
             out = gl;
         }

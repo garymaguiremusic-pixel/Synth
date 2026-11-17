@@ -1,5 +1,6 @@
 #include "SylenthEngine.h"
 #include "Tables/Tables.h"
+#include "SylenthDefaults.h"
 #include <string>
 
 namespace vc
@@ -146,6 +147,8 @@ namespace sylenth
             }
             set (FiltAInput, "syl_filtA_input", "Filter A Input", 0.0f, 3, kInput);
             set (FiltBInput, "syl_filtB_input", "Filter B Input", 0.0f, 3, kInput);
+            set (Mod1Sync, "syl_mod1_sync", "Mod Env 1 Sync", 0.0f, 2, kOnOff);
+            set (Mod2Sync, "syl_mod2_sync", "Mod Env 2 Sync", 0.0f, 2, kOnOff);
             return d;
         }();
         return t;
@@ -286,7 +289,8 @@ void SylenthEngine::startVoice (Voice& v, int note, float vel, bool legato)
         const int b = OscBase + o * OscStride;
         auto& osc = v.osc[(size_t) o];
         if (! wasActive) osc.rng.seed (rng.next());
-        const bool retrig = p (b + oRetrig) > 0.5f;
+        const bool lockPhase = global && global->lockHz >= 1.0;
+        const bool retrig = p (b + oRetrig) > 0.5f || lockPhase;
         for (auto& ph : osc.phase)
             if (retrig || ! wasActive) ph = retrig ? p (b + oPhase) : osc.rng.uniform();
     }
@@ -299,7 +303,10 @@ void SylenthEngine::startVoice (Voice& v, int note, float vel, bool legato)
 
 double SylenthEngine::envTick (Env& e, int base)
 {
-    const double att = envSeconds (p (base)), dec = envSeconds (p (base + 1)), sus = p (base + 2), rel = envSeconds (p (base + 3));
+    // synced mod envelopes: the knob picks a note value from 1/256 to 4 bars (13 doublings)
+    const bool synced = (base == Mod1 && p (Mod1Sync) > 0.5f) || (base == Mod2 && p (Mod2Sync) > 0.5f);
+    auto t = [&] (double v) { return synced ? std::max (0.0005, 16.0 * std::pow (2.0, std::round (v * 12.0) - 12.0) * 60.0 / bpm) : envSeconds (v); };
+    const double att = t (p (base)), dec = t (p (base + 1)), sus = p (base + 2), rel = t (p (base + 3));
     const double dt = 1.0 / sr;
     switch (e.stage)
     {
@@ -396,7 +403,14 @@ void SylenthEngine::renderVoice (Voice& v, double* L, double* R, int n)
             }
             v.lfoRateMod = { v.mod[DLfo1Rate], v.mod[DLfo2Rate] };
             v.lfoGainMod = { v.mod[DLfo1Gain], v.mod[DLfo2Gain] };
-            if (global) v.gstage.control (*global, sr, 32);
+            if (global)
+            {
+                v.gstage.control (*global, sr, 32);
+                if (global->lockHz >= 1.0)
+                    for (auto& a : v.lockX) for (auto& x : a) x.set (global->lockHz, sr);
+                if (global->lockHz >= 1.0)
+                    for (auto& a : v.lockC) for (auto& x : a) x.set (global->lockHz, sr);
+            }
 
             // Filter Control is the master: its cutoff / resonance offset both filters (centre = no change)
             const double fctlCut = (p (FCtl) - 0.5), fctlRes = p (FCtl + 1), fctlKey = p (FCtl + 3);
@@ -419,12 +433,13 @@ void SylenthEngine::renderVoice (Voice& v, double* L, double* R, int n)
         envTick (v.env[3], Mod2);
         const double gAmp = v.gstage.tickEnvelopes();
 
-        double partL[2] {}, partR[2] {};
+        double partL[2] {}, partR[2] {}, lockL[2] {}, lockR[2] {};
+        const bool lock = v.gstage.lockOn();
         for (int o = 0; o < 4; ++o)
         {
             const int b = OscBase + o * OscStride;
             const int count = listValue (p (b + oVoices), 9);
-            if (count == 0) continue;
+            if (count == 0 || (global && ! global->oscOn[(size_t) o])) continue;
             const int part = o / 2;
             auto& osc = v.osc[(size_t) o];
             const int wave = listValue (p (b + oWave), 8);
@@ -436,7 +451,8 @@ void SylenthEngine::renderVoice (Voice& v, double* L, double* R, int n)
             const double vol = std::clamp (p (b + oVolume) + v.mod[DVolumeAB] + (part == 0 ? v.mod[DVolumeA] : v.mod[DVolumeB]), 0.0, 1.0);
             const double pan = std::clamp ((p (b + oPan) - 0.5) * 2.0 + v.mod[DPanAB] + (part == 0 ? v.mod[DPanA] : v.mod[DPanB]), -1.0, 1.0);
             const double inv = p (b + oInvert) > 0.5f ? -1.0 : 1.0;
-            double sl = 0, srr = 0;
+            double sl = 0, srr = 0, cl = 0, cr = 0;
+            const int centre = (count - 1) / 2;
             for (int u = 0; u < count; ++u)
             {
                 const double pos = count > 1 ? (double) u / (count - 1) * 2.0 - 1.0 : 0.0;
@@ -465,11 +481,22 @@ void SylenthEngine::renderVoice (Voice& v, double* L, double* R, int n)
                 const double up = std::clamp (pan + pos * stereo, -1.0, 1.0);
                 sl += s * std::cos ((up + 1.0) * kPi * 0.25);
                 srr += s * std::sin ((up + 1.0) * kPi * 0.25);
+                if (u == centre) { cl = s * std::cos ((pan + 1.0) * kPi * 0.25); cr = s * std::sin ((pan + 1.0) * kPi * 0.25); }
             }
             const double g = inv * vol / std::sqrt ((double) count);
             partL[part] += sl * g;
             partR[part] += srr * g;
+            lockL[part] += cl * inv * vol;
+            lockR[part] += cr * inv * vol;
         }
+
+        // Phase Lock: below the crossover each part plays only its oscillators' centre voice (no beating)
+        if (lock)
+            for (int pt = 0; pt < 2; ++pt)
+            {
+                partL[pt] = v.lockX[pt][0].high (partL[pt]) + v.lockC[pt][0].low (lockL[pt]);
+                partR[pt] = v.lockX[pt][1].high (partR[pt]) + v.lockC[pt][1].low (lockR[pt]);
+            }
 
         // filters A and B (one per part), 12 or 24 dB, drive
         auto runFilter = [&] (int f, double x, int c)
@@ -721,5 +748,73 @@ std::array<float, SylenthEngine::kNumParams> SylenthEngine::fromSylenthPreset (c
         }
     }
     return a;
+}
+
+std::vector<float> SylenthEngine::toSylenthPreset (const std::array<float, kNumParams>& a, const std::vector<float>& base)
+{
+    // the inverse of fromSylenthPreset: starts from the imported values (or Sylenth's defaults) so
+    // everything this engine doesn't model (effects, arp settings ...) keeps its value
+    std::vector<float> raw (base.size() == sy::NumValues ? base : std::vector<float> (std::begin (kSylenthDefaults), std::end (kSylenthDefaults)));
+    auto pv = [&] (int i) { return std::clamp (a[(size_t) i], 0.0f, 1.0f); };
+    auto set = [&] (int i, float v) { raw[(size_t) i] = std::clamp (v, 0.0f, 1.0f); };
+    auto relist = [] (float v, int from, int to) { return list (std::clamp ((int) std::lround (v * (from - 1)), 0, to - 1), to); };
+    for (int o = 0; o < 4; ++o)
+    {
+        const int s = sy::OscA1 + o * sy::OscStride, b = OscBase + o * OscStride;
+        set (s + 0, pv (b + oDetune));  set (s + 1, pv (b + oFine));    set (s + 2, pv (b + oInvert));
+        set (s + 3, relist (pv (b + oNote), 15, 15));  set (s + 4, relist (pv (b + oOctave), 7, 7));
+        set (s + 5, pv (b + oPan));     set (s + 6, pv (b + oPhase));   set (s + 7, pv (b + oRetrig));
+        set (s + 8, pv (b + oStereo));  set (s + 9, relist (pv (b + oVoices), 9, 9));
+        set (s + 10, pv (b + oVolume)); set (s + 11, relist (pv (b + oWave), 8, 8));
+    }
+    for (int f = 0; f < 2; ++f)
+    {
+        const int s = f == 0 ? sy::FilterA : sy::FilterB, b = f == 0 ? FiltA : FiltB;
+        set (s + 0, pv (b + 2)); set (s + 1, pv (b + 4)); set (s + 2, relist (pv (f == 0 ? FiltAInput : FiltBInput), 3, 3));
+        set (s + 3, pv (b + 3)); set (s + 4, relist (pv (b), 4, 4)); set (s + 5, pv (b + 1) > 0.5f ? 0.0f : 1.0f);
+    }
+    set (sy::FCtlCutoff, pv (FCtl)); set (sy::FCtlReso, pv (FCtl + 1)); set (sy::FCtlWarm, pv (FCtl + 2)); set (sy::FCtlKey, pv (FCtl + 3));
+    auto env = [&] (int s, int b) { set (s + 0, pv (b)); set (s + 1, pv (b + 1)); set (s + 3, pv (b + 2)); set (s + 2, pv (b + 3)); };
+    env (sy::AmpA, AmpA); env (sy::AmpB, AmpB); env (sy::ModEnv1, Mod1); env (sy::ModEnv2, Mod2);
+    auto dest = [&] (int i) { return (float) std::clamp ((int) std::lround (pv (i) * (DNumDests - 1)), 0, DNumDests - 1) / 32.0f; };
+    set (sy::ModEnv1Dest, dest (Mod1 + 4)); set (sy::ModEnv1Amt, pv (Mod1 + 5)); set (sy::ModEnv1Dest + 1, dest (Mod1 + 6)); set (sy::ModEnv1Amt + 1, pv (Mod1 + 7));
+    set (sy::ModEnv2Dest, dest (Mod2 + 4)); set (sy::ModEnv2Amt, pv (Mod2 + 5)); set (sy::ModEnv2Dest + 1, dest (Mod2 + 6)); set (sy::ModEnv2Amt + 1, pv (Mod2 + 7));
+    for (int l = 0; l < 2; ++l)
+    {
+        const int s = l == 0 ? sy::Lfo1 : sy::Lfo2, b = l == 0 ? Lfo1 : Lfo2;
+        const int ds = l == 0 ? sy::Lfo1Dest : sy::Lfo2Dest, as = l == 0 ? sy::Lfo1Amt : sy::Lfo2Amt;
+        set (s + 0, pv (l == 0 ? Lfo1Free : Lfo2Free)); set (s + 1, pv (b + 3)); set (s + 2, pv (b + 4)); set (s + 3, pv (b + 1));
+        // a tempo division: the rate knob position that shows it (Sylenth's Sync on)
+        const int sync = listValue (pv (b + 2), kNumSyncs);
+        if (sync > 0)
+        {
+            int best = 0;
+            for (int k = 1; k < 33; ++k)
+                if (std::abs (std::log (sy::kLfoRateBeats[k] / syncBeats (sync))) < std::abs (std::log (sy::kLfoRateBeats[best] / syncBeats (sync)))) best = k;
+            set (s + 3, (float) best / 32.0f);
+        }
+        set (s + 4, relist (pv (b), kNumLfoWaves, kNumLfoWaves));
+        set (ds, dest (b + 5)); set (as, pv (b + 6)); set (ds + 1, dest (b + 7)); set (as + 1, pv (b + 8));
+    }
+    const int miscSrc[4] = { sy::Misc1ASource, sy::Misc1BSource, sy::Misc2ASource, sy::Misc2BSource };
+    const int miscAmt[4] = { sy::Misc1AAmt, sy::Misc1BAmt, sy::Misc2AAmt, sy::Misc2BAmt };
+    const int miscDst[4] = { sy::Misc1ADest, sy::Misc1BDest, sy::Misc2ADest, sy::Misc2BDest };
+    for (int m = 0; m < 4; ++m)
+    {
+        const int b = Misc + m * 5;
+        set (miscSrc[m], relist (pv (b), SNumSources, SNumSources));
+        set (miscDst[m], dest (b + 1)); set (miscAmt[m], pv (b + 2)); set (miscDst[m] + 1, dest (b + 3)); set (miscAmt[m] + 1, pv (b + 4));
+    }
+    set (sy::Sync, listValue (pv (Lfo1 + 2), kNumSyncs) > 0 || listValue (pv (Lfo2 + 2), kNumSyncs) > 0 ? 1.0f : 0.0f);
+    set (sy::MixA, pv (MixA)); set (sy::MixB, pv (MixB)); set (sy::MainVolume, pv (MainVol));
+    set (sy::MonoLegato, pv (Legato) > 0.5f || pv (Mono) > 0.5f ? 1.0f : 0.0f);
+    set (sy::Polyphony, list (listValue (pv (Polyphony), 16) + 1, 17));
+    set (sy::PortaTime, pv (Porta));
+    set (sy::PortaMode, listValue (pv (PortaMode), 2) == 1 ? 0.0f : 1.0f);
+    set (sy::BendRange, pv (BendRange));
+    const int solo = listValue (pv (Solo), 3);
+    set (sy::Solo, solo > 0 ? 1.0f : 0.0f);
+    if (solo > 0) set (sy::PartSelect, solo == 2 ? 1.0f : 0.0f);
+    return raw;
 }
 } // namespace vc
