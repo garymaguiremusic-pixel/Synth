@@ -602,7 +602,9 @@ float VCClonePanel::previewValue (Preview kind, float x) const
             const double a = vc::tables::envTimeSec (val (amp ? Amp_Env_Attack : Filter_Env_Attack));
             const double d = vc::tables::envTimeSec (val (amp ? Amp_Env_Decay : Filter_Env_Decay));
             const double s = val (amp ? Amp_Env_Sustain : Filter_Env_Sustain) / 127.0;
-            const double slope = vc::tables::sustainSlopeSec ((int) val (amp ? Amp_Env_Sustain_Time : Filter_Env_Sustain_Time));
+            // sustain slope as "full scale per second" for the sketch (dB/s law, 60 dB = full scale)
+            const double dbs = vc::tables::sustainSlopeDbPerSec ((int) val (amp ? Amp_Env_Sustain_Time : Filter_Env_Sustain_Time));
+            const double slope = dbs == 0.0 ? 0.0 : 60.0 / dbs;
             const double r = vc::tables::envTimeSec (val (amp ? Amp_Env_Release : Filter_Env_Release));
             // log-ish time axis: attack, decay, 1 s of sustain, release, each squeezed into a quarter
             auto squash = [] (double t) { return std::log1p (t * 20.0) / std::log1p (20.0 * 20.0); };

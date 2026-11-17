@@ -96,22 +96,18 @@ inline double releaseTimeSec (double v)
     return envTimeSec (v);
 #endif
 }
-// Sustain time (slope) 0..127.
-// Hypothesis A (used): 64 = hold (flat); below 64 the level falls, faster towards 0;
-// above 64 it rises, faster towards 127. Factory statistics back this: 64 is the
-// most common value (61-72 % of patches). NOTE: the Osirus value list labels
-// 0 = "Infinite" and 64 = "Fall"; the calibration sweep must settle which is right.
-// Returns the time (s) for a full 0 <-> 1 ramp, sign = direction, 0 = hold.
-inline double sustainSlopeSec (int v)
+// Sustain time (slope) 0..127. MEASURED on Osirus (env/amp_sustain_time probes):
+// 64 = hold; below 64 the level falls, above 64 it rises (to full level), linearly in dB.
+// The rate grows ~5.2x per 16 steps away from 64: 1.7 dB/s at 48, 8.9 at 32, 47 at 16, near-instant at 0
+// (rises: ~1.4 dB/s at 80, ~7 at 96). Note: Osirus's value list labels 0 "Infinite" and 64 "Fall";
+// the audio shows 64 is the flat setting.
+// Returns dB per second, signed (negative = falling), 0 = hold.
+inline double sustainSlopeDbPerSec (int v)
 {
-#ifdef VC_MEASURED_SUSTAIN_TIME
-    return measured::kSustainTime[(size_t) std::clamp (v, 0, 127)];
-#else
     if (v == 64) return 0.0;
-    const double d = std::abs (v - 64) / 64.0;          // 0..1
-    const double t = expMap (1.0 - d, 0.05, 40.0);      // closer to the ends = faster
-    return v < 64 ? -t : t;
-#endif
+    const double d = std::abs (v - 64);
+    const double rate = 1.6 * std::pow (5.2, (d - 16.0) / 16.0);
+    return v < 64 ? -rate : rate;
 }
 
 // -------------------------------------------------------------------------------------
@@ -164,16 +160,40 @@ inline double volumeGain (double v)             // 0..127 -> 0..1 (squared law g
     const double x = std::clamp (v, 0.0, 127.0) / 127.0;
     return x * x;
 }
-inline double mainVolumeGain (double v)         // 64 = unity, above drives the saturation
+// Osc Volume: MEASURED -9.6 dB at 32 against 64, and no level change above 64 (it drives the saturation).
+inline double mainVolumeGain (double v)
 {
     const double x = std::clamp (v, 0.0, 127.0);
-    return x <= 64.0 ? (x / 64.0) * (x / 64.0) : 1.0 + (x - 64.0) / 63.0 * 3.0;
+    return x >= 64.0 ? 1.0 : std::pow (x / 64.0, 1.6);
 }
-inline double patchVolumeGain (double v)        // 100 ~ unity (guess)
+// Drive into the saturation stage from Osc Volume above 64 (the output is compensated, see Synth.cpp)
+inline double mainVolumeDrive (double v)
 {
-    const double x = std::clamp (v, 0.0, 127.0) / 100.0;
-    return x * x;
+    const double x = std::clamp (v, 0.0, 127.0);
+    return x <= 64.0 ? 1.0 : 1.0 + (x - 64.0) / 63.0 * 3.0;
 }
+// Patch Volume: MEASURED (dB relative to 100): 32 -22.7, 64 -9.1, 96 -1.0, 100 0, 127 +6.8; 0 = silent.
+inline double patchVolumeGain (double v)
+{
+    const double x = std::clamp (v, 0.0, 127.0);
+    if (x <= 0.0) return 0.0;
+    static constexpr double xs[] = { 0.0, 32.0, 64.0, 96.0, 100.0, 127.0 };
+    static constexpr double db[] = { -36.3, -22.7, -9.1, -1.0, 0.0, 6.8 };
+    int i = 0;
+    while (i < 4 && x > xs[i + 1]) ++i;
+    const double t = (x - xs[i]) / (xs[i + 1] - xs[i]);
+    return std::pow (10.0, (db[i] + (db[i + 1] - db[i]) * t) / 20.0);
+}
+// Amp Velocity (signed amount -1..1, velocity 0..1). MEASURED at velocity 40: 64 = no effect; +1 = -18.4 dB,
+// +0.5 = -8.5 dB, -1 = -7.9 dB, -0.5 = -4 dB, i.e. gain = vel^(1.8 a) for a > 0 and vel^(0.78 |a|) for a < 0.
+// (Only one velocity was probed: the negative side may scale with velocity differently.)
+inline double ampVelocityGain (double amount, double vel)
+{
+    vel = std::clamp (vel, 0.01, 1.0);
+    return amount >= 0.0 ? std::pow (vel, 1.8 * amount) : std::pow (vel, 0.78 * -amount);
+}
+// Overall output level: MEASURED init-patch saw at -25.7 dBFS RMS on Osirus (VC-Clone was 11.8 dB louder).
+constexpr double kOutputTrimDb = -11.8;
 
 // FM index for Osc2 FM Amount 0..127 (linear FM, guess)
 inline double fmIndex (double v) { const double x = std::clamp (v, 0.0, 127.0) / 127.0; return 6.0 * x * x; }
@@ -240,13 +260,7 @@ inline std::array<TableInfo, 16> tableStatus()
             false
 #endif
             ), "Attack/Decay/Release times" },
-        { "sustainTime",     st (
-#ifdef VC_MEASURED_SUSTAIN_TIME
-            true
-#else
-            false
-#endif
-            ), "Sustain slope (direction + speed)" },
+        { "sustainTime",     Status::Measured, "Sustain slope (dB/s law from the Osirus probes)" },
         { "lfoRate",         st (
 #ifdef VC_MEASURED_LFO_RATE
             true
@@ -263,10 +277,16 @@ inline std::array<TableInfo, 16> tableStatus()
             ), "Osc2 detune cents" },
         { "unisonDetune",    Status::Guessed, "Unison detune spread" },
         { "portamento",      Status::Guessed, "Portamento time" },
-        { "levels",          Status::Guessed, "Volume / balance / main volume laws" },
+        { "levels",          Status::Measured, "Patch/osc volume, amp velocity, output trim (Osirus probes)" },
         { "fmIndex",         Status::Guessed, "Osc2 FM amount" },
         { "pulseWidth",      Status::Guessed, "Pulse width law" },
-        { "waves",           Status::Guessed, "Spectral waves 3..64 harmonic content" },
+        { "waves",           st (
+#ifdef VC_MEASURED_WAVES
+            true
+#else
+            false
+#endif
+            ), "Spectral waves 3..64 harmonic content" },
         { "saturation",      Status::Guessed, "Saturation / distortion transfer curves" },
         { "fxTimes",         Status::Guessed, "Chorus/phaser/delay/reverb timing" },
         { "eq",              Status::Guessed, "EQ / bass boost frequencies and gains" },
