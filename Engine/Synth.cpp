@@ -198,6 +198,7 @@ void Voice::start (Synth& s, int n, float vel, int uIndex, int uCount, double gl
     }
     ampEnv.gateOn (! wasActive);
     filtEnv.gateOn (! wasActive);
+    if (s.global) gstage.start (n, vel, *s.global, kVoiceRate, ! wasActive);
     (void) retrigger;
     punchEnv = 1.0;
     punchCoef = std::exp (-1.0 / (0.006 * kVoiceRate));
@@ -217,6 +218,7 @@ void Voice::release()
     gate = false;
     ampEnv.gateOff();
     filtEnv.gateOff();
+    gstage.release();
 }
 
 void Voice::controlTick (Synth& s, int blockLen)
@@ -255,12 +257,24 @@ void Voice::controlTick (Synth& s, int blockLen)
     }
 
     // --- envelopes (re-setup each block so modulation of times works) -------------
-    ampEnv.setup (tables::attackTimeSec (pvRaw (Amp_Env_Attack)), tables::decayTimeSec (pvRaw (Amp_Env_Decay)),
-                  pvRaw (Amp_Env_Sustain) / 127.0, (int) std::lround (pvRaw (Amp_Env_Sustain_Time)),
-                  tables::releaseTimeSec (pvRaw (Amp_Env_Release)), kVoiceRate);
-    filtEnv.setup (tables::attackTimeSec (pvRaw (Filter_Env_Attack)), tables::decayTimeSec (pvRaw (Filter_Env_Decay)),
-                   pvRaw (Filter_Env_Sustain) / 127.0, (int) std::lround (pvRaw (Filter_Env_Sustain_Time)),
-                   tables::releaseTimeSec (pvRaw (Filter_Env_Release)), kVoiceRate);
+    if (s.global && s.global->ampOverride)
+    {
+        // global Filter / Amp ADSR (times may be BPM-synced); the patch's sustain slopes are kept
+        const auto& ga = s.global->amp;
+        const auto& gf = s.global->filter;
+        ampEnv.setup (ga.attack, ga.decay, ga.sustain, (int) std::lround (pvRaw (Amp_Env_Sustain_Time)), ga.release, kVoiceRate);
+        filtEnv.setup (gf.attack, gf.decay, gf.sustain, (int) std::lround (pvRaw (Filter_Env_Sustain_Time)), gf.release, kVoiceRate);
+    }
+    else
+    {
+        ampEnv.setup (tables::attackTimeSec (pvRaw (Amp_Env_Attack)), tables::decayTimeSec (pvRaw (Amp_Env_Decay)),
+                      pvRaw (Amp_Env_Sustain) / 127.0, (int) std::lround (pvRaw (Amp_Env_Sustain_Time)),
+                      tables::releaseTimeSec (pvRaw (Amp_Env_Release)), kVoiceRate);
+        filtEnv.setup (tables::attackTimeSec (pvRaw (Filter_Env_Attack)), tables::decayTimeSec (pvRaw (Filter_Env_Decay)),
+                       pvRaw (Filter_Env_Sustain) / 127.0, (int) std::lround (pvRaw (Filter_Env_Sustain_Time)),
+                       tables::releaseTimeSec (pvRaw (Filter_Env_Release)), kVoiceRate);
+    }
+    if (s.global) gstage.control (*s.global, kVoiceRate, blockLen);
 
     // --- mod matrix: sources -------------------------------------------------------
     const double vel = velocity;
@@ -612,6 +626,13 @@ void Voice::render (Synth& s, double* L, double* R, int numSamples)
             }
         }
         out *= lerp (prevCtl.filtGain, ctl.filtGain);
+        if (s.global)
+        {
+            double gl = out, gr = out;
+            gstage.filter (gl, gr);
+            gstage.tickEnvelopes();
+            out = gl;
+        }
 
         // --- amp -------------------------------------------------------------------------------
         filtEnv.tick();
@@ -738,7 +759,7 @@ void Synth::noteOn (int note, int velocity)
     heldNotes.push_back (note);
     noteVelocity[(size_t) note] = velocity;
 
-    if (p.i (Arp_Mode) != 0)
+    if (internalArp && p.i (Arp_Mode) != 0)
     {
         if (p.i (Arp_Hold_Enable) && heldNotes.size() == 1)
             arpLatched.clear();
@@ -753,7 +774,7 @@ void Synth::noteOff (int note)
 {
     if (note < 0 || note > 127) return;
     heldNotes.erase (std::remove (heldNotes.begin(), heldNotes.end(), note), heldNotes.end());
-    if (p.i (Arp_Mode) != 0)
+    if (internalArp && p.i (Arp_Mode) != 0)
     {
         if (! p.i (Arp_Hold_Enable))
             arpLatched.erase (std::remove (arpLatched.begin(), arpLatched.end(), note), arpLatched.end());
@@ -914,7 +935,7 @@ void Synth::controlTick()
 
 void Synth::arpTick (int numSamples)
 {
-    const int mode = p.i (Arp_Mode);
+    const int mode = internalArp ? p.i (Arp_Mode) : 0;
     if (mode == 0)
     {
         if (arpWasActive)
@@ -1024,7 +1045,10 @@ void Synth::renderInternal (float* L, float* R, int numSamples)
         ctlPos = (ctlPos + n) % kControlBlock;
     }
 
-    std::array<float, 256> globalMod {};
-    fx.process (L, R, numSamples, p, tempoBpm(), globalMod);
+    if (internalFx)
+    {
+        std::array<float, 256> globalMod {};
+        fx.process (L, R, numSamples, p, tempoBpm(), globalMod);
+    }
 }
 } // namespace vc

@@ -6,6 +6,7 @@
 
 #include "Dsp.h"
 #include "Fx.h"
+#include "Global.h"
 #include "Tables/Tables.h"
 
 #include <array>
@@ -91,6 +92,7 @@ private:
     dsp::Ladder ladder;
     dsp::OnePole noiseLp, noiseHp;
     Shaper satShaper;
+    GlobalVoiceStage gstage;      // global filter (used when Synth::global is set)
     double punchEnv = 0.0, punchCoef = 0.0;
     dsp::Rng rng;
     double timeSinceOn = 0.0;
@@ -133,6 +135,13 @@ public:
     void channelPressure (int value);
     void allNotesOff (bool hard = false);
     void setHostTempo (double bpm) { hostBpm = bpm; }
+
+    /** Modes integration: shared global section (null = stand-alone Virus behaviour), and whether
+        the Virus's own effects and arpeggiator run (VC-Clone uses its global FX and arp instead). */
+    void setGlobal (const GlobalVoiceSettings* g) { global = g; }
+    void setInternalFx (bool on) { internalFx = on; }
+    void setInternalArp (bool on) { internalArp = on; if (! on) arpLatched.clear(); }
+    const GlobalVoiceSettings* global = nullptr;
     void seed (uint64_t s);
     /** Back to a clean start (no voices, FX tails, LFO phases or glide history; RNG re-seeded). */
     void reset();
@@ -190,5 +199,6 @@ private:
     int ctlPos = 0;
 
     FxChain fx;
+    bool internalFx = true, internalArp = true;
 };
 } // namespace vc

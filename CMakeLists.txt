@@ -48,10 +48,26 @@ add_custom_command(
 add_custom_target(vc_layout DEPENDS ${VC_LAYOUT_H} ${VC_SPIRE_LAYOUT_H})
 
 # ------------------------------------------------------------------------------
+# zlib (Sylenth1 banks are zlib-compressed)
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(zlib
+    GIT_REPOSITORY https://github.com/madler/zlib.git
+    GIT_TAG        v1.3.1
+    GIT_SHALLOW    ON)
+FetchContent_GetProperties(zlib)
+if(NOT zlib_POPULATED)
+    FetchContent_Populate(zlib)
+    add_subdirectory(${zlib_SOURCE_DIR} ${zlib_BINARY_DIR} EXCLUDE_FROM_ALL)
+endif()
+set_target_properties(zlibstatic PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# ------------------------------------------------------------------------------
 # PresetIO (pure C++)
-add_library(vc_presetio STATIC PresetIO/src/PresetIO.cpp ${VC_LAYOUT_H})
+add_library(vc_presetio STATIC PresetIO/src/PresetIO.cpp PresetIO/src/AnyPreset.cpp ${VC_LAYOUT_H})
 add_dependencies(vc_presetio vc_layout)
 target_include_directories(vc_presetio PUBLIC PresetIO/include ${VC_GEN_DIR})
+target_include_directories(vc_presetio PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
+target_link_libraries(vc_presetio PRIVATE zlibstatic)
 set_target_properties(vc_presetio PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ------------------------------------------------------------------------------
@@ -61,7 +77,9 @@ add_library(vc_engine STATIC
     Engine/Fx.cpp
     Engine/HostEngine.cpp
     Engine/Global.cpp
+    Engine/Instrument.cpp
     Engine/SpireEngine.cpp
+    Engine/SylenthEngine.cpp
     Engine/Tables/Waves.cpp)
 add_dependencies(vc_engine vc_layout)
 target_include_directories(vc_engine PUBLIC Engine Engine/Tables ${VC_GEN_DIR})
@@ -84,8 +102,9 @@ if(VCCLONE_BUILD_TESTS)
         GIT_TAG        v3.7.1
         GIT_SHALLOW    ON)
     FetchContent_MakeAvailable(Catch2)
-    add_executable(vc_tests tests/test_presetio.cpp tests/test_engine.cpp)
-    target_link_libraries(vc_tests PRIVATE vc_engine vc_presetio Catch2::Catch2WithMain)
+    add_executable(vc_tests tests/test_presetio.cpp tests/test_engine.cpp tests/test_modes.cpp)
+    target_link_libraries(vc_tests PRIVATE vc_engine vc_presetio zlibstatic Catch2::Catch2WithMain)
+    target_include_directories(vc_tests PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
     enable_testing()
     add_test(NAME vc_tests COMMAND vc_tests)
 endif()
