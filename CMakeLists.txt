@@ -156,6 +156,7 @@ if(VCCLONE_BUILD_PLUGIN)
         Plugin/UI/VirusComponents.cpp
         Plugin/UI/ParamAdapters.cpp
         Plugin/UI/SynthWidgets.cpp
+        Plugin/UI/BrowserView.cpp
         Plugin/VendorDelay.cpp
         Plugin/VendorReverb.cpp
         Plugin/VendorStepSeq.cpp)

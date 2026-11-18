@@ -784,6 +784,7 @@ String VCCloneAudioProcessor::loadBankFile (const File& file)
     bank = std::move (res.patches);
     warnings = std::move (res.warnings);
     bankName = file.getFileName();
+    bankFile = file;
     bankFormat = res.formatName;
     currentProgram = 0;
     loadAnyPatch (bank.front());

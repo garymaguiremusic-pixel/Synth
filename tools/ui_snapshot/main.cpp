@@ -8,7 +8,7 @@ static juce::TextButton* findButton (juce::Component* root, const juce::String& 
 {
     for (auto* c : root->getChildren())
         if (auto* b = dynamic_cast<juce::TextButton*> (c))
-            if (b->getButtonText() == text) return b;
+            if (b->getButtonText() == text || (text == "MATRIX" && b->getButtonText().startsWith ("MATRIX") && b->isVisible())) return b;
     return nullptr;
 }
 
@@ -34,7 +34,7 @@ int main (int argc, char** argv)
     auto pump = [] (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); };
     pump (200);
 
-    const juce::StringArray modes { "VIRUS", "SYLENTH", "SPIRE" }, pages { "ARP", "MOD", "MORE", "DISTORT", "DELAY", "REVERB", "Browser" };
+    const juce::StringArray modes { "VIRUS", "SYLENTH", "SPIRE" }, pages { "MAIN", "MATRIX", "Browser" };
     for (int m = 0; m < modes.size(); ++m)
     {
         if (argc > 2 && m != (int) proc->getMode()) continue;     // with a preset: only its mode
@@ -43,9 +43,9 @@ int main (int argc, char** argv)
         pump (150);
         for (auto& page : pages)
         {
-            if (auto* b = findButton (panel, page); b && b->onClick) b->onClick();
-            if (page == "ARP")
-                if (auto* prm = proc->apvts.getParameter (gid::arpMode)) prm->setValueNotifyingHost (prm->convertTo0to1 (1.0f));
+            if (page != "MAIN")
+                if (auto* b = findButton (panel, page); b && b->onClick) b->onClick();
+            if (auto* prm = proc->apvts.getParameter (gid::arpMode)) prm->setValueNotifyingHost (prm->convertTo0to1 (1.0f));
             pump (150);
             auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
             auto f = outDir.getChildFile (modes[m] + "_" + page + ".png");
@@ -53,6 +53,11 @@ int main (int argc, char** argv)
             juce::FileOutputStream os (f);
             juce::PNGImageFormat().writeImageToStream (img, os);
             std::printf ("wrote %s\n", f.getFullPathName().toRawUTF8());
+            if (page != "MAIN")      // back to the main view
+                for (auto* b : panel->getChildren())
+                    if (auto* tb = dynamic_cast<juce::TextButton*> (b); tb && tb->isVisible() && tb->onClick
+                        && (tb->getButtonText().contains ("LFO / ENV") || (page == "Browser" && tb->getButtonText() == "Browser")))
+                    { tb->onClick(); pump (100); break; }
         }
     }
     ed.reset();

@@ -72,6 +72,7 @@ public:
     const std::vector<vc::AnyPatch>& getBank() const { return bank; }
     const std::vector<vc::ImportWarning>& getWarnings() const { return warnings; }
     juce::String getBankName() const { return bankName; }
+    juce::File getBankFile() const { return bankFile; }
     juce::String getBankFormat() const { return bankFormat; }
     juce::String getPatchName() const { return patchName; }
     juce::StringArray getPatchNotes() const;           // what the loaded patch could not carry over
@@ -146,6 +147,7 @@ private:
     std::vector<vc::AnyPatch> bank;
     std::vector<vc::ImportWarning> warnings;
     juce::String bankName, bankFormat, patchName;
+    juce::File bankFile;
     int currentProgram = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VCCloneAudioProcessor)

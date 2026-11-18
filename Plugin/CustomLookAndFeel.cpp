@@ -219,7 +219,11 @@ void CustomLookAndFeel::drawComboBox (Graphics& g, int width, int height, bool,
                                       int, int, int, int, ComboBox& box)
 {
     const auto b = Rectangle<int> (width, height).toFloat();
-    drawInsetBox (g, b);
+    // blue dropdown (the one-window layout)
+    g.setColour (Colours::black.withAlpha (0.35f));
+    g.fillRoundedRectangle (b.translated (0.0f, 1.0f), 4.0f);
+    g.setColour (box.isMouseOver (true) ? Colour (0xff2a78d0) : Colour (0xff1f6bc4));
+    g.fillRoundedRectangle (b, 4.0f);
 
     if (box.hasKeyboardFocus (false) || box.isPopupActive())
     {

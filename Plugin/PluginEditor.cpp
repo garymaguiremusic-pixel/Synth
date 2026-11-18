@@ -15,12 +15,6 @@ using SpK = SpireAdapter::Kind;
 namespace
 {
     constexpr int kWidth = VCClonePanel::kBaseWidth, kHeight = VCClonePanel::kBaseHeight;
-    constexpr int kTopH = 36, kContentY = 40;
-    constexpr int kBottomY = 702;
-    constexpr int kStripH = 104, kStripY = kBottomY - kStripH - 6;
-    constexpr int kRowH = 88, kRowGap = 4, kHeaderH = 16, kCellH = 64;
-    const char* kPageNames[] = { "Synth", "Mod", "Matrix", "Arp", "FX", "Browser" };
-    const char* kModeNames[] = { "VIRUS", "SYLENTH", "SPIRE" };
 
     // Spire value lists: the names Spire itself shows, per stored index (Engine/SpireLists.h, from vc_probe)
     template <size_t N> StringArray toList (const char* const (&items)[N])
@@ -123,57 +117,129 @@ std::unique_ptr<ParamAdapter> VCClonePanel::virus (int offset, String label)
                                            isListParam (offset));
 }
 
-VCClonePanel::Control* VCClonePanel::makeControl (std::unique_ptr<ParamAdapter> a, bool forceKnob, bool powerDot)
+namespace
 {
+    const char* kModeNames[] = { "VIRUS", "SYLENTH", "SPIRE" };
+    constexpr int V = (int) vc::SynthMode::Virus, SY = (int) vc::SynthMode::Sylenth, SPm = (int) vc::SynthMode::Spire;
+    const Colour kComboBlue { 0xff1f6bc4 }, kDim { 0xff8f99a3 }, kCaption { 0xffaab3bb };
+
+    /** A waveform for the oscillator picture, from the wave's name. */
+    float waveByName (const String& n, float p)
+    {
+        const auto s = n.toLowerCase();
+        if (s.contains ("noise")) return Random::getSystemRandom().nextFloat() * 2.0f - 1.0f;
+        if (s.contains ("sine") || s.contains ("sin")) return std::sin (MathConstants<float>::twoPi * p);
+        if (s.contains ("tri")) return p < 0.5f ? 4.0f * p - 1.0f : 3.0f - 4.0f * p;
+        if (s.contains ("hpulse")) return p < 0.25f ? 1.0f : -1.0f;
+        if (s.contains ("qpulse")) return p < 0.125f ? 1.0f : -1.0f;
+        if (s.contains ("pulse") || s.contains ("square") || s.contains ("sq")) return p < 0.5f ? 1.0f : -1.0f;
+        if (s.contains ("saw") || s.contains ("classic") || s.contains ("hyper")) return 1.0f - 2.0f * p;
+        // wavetables and anything else: a soft harmonic shape
+        return 0.6f * std::sin (MathConstants<float>::twoPi * p) + 0.3f * std::sin (3.0f * MathConstants<float>::twoPi * p);
+    }
+}
+
+//==============================================================================
+void VCClonePanel::TabButton::paintButton (Graphics& g, bool highlighted, bool)
+{
+    auto b = getLocalBounds().toFloat().reduced (0.5f);
+    const bool sel = getToggleState();
+    const bool on = isOn ? isOn() : true;
+    if (small)
+    {
+        // a numbered badge: the oscillator's on/off switch
+        g.setColour (Colour (0xff15181b));
+        g.fillRoundedRectangle (b, 4.0f);
+        if (on)
+        {
+            g.setColour (VirusColours::blue.withAlpha (0.25f));
+            g.drawRoundedRectangle (b.expanded (1.5f), 5.0f, 3.0f);
+        }
+        g.setColour (on ? VirusColours::blue : Colour (0xff3a3f45));
+        g.drawRoundedRectangle (b.reduced (1.0f), 4.0f, 2.0f);
+        g.setFont (CustomLookAndFeel::uiFont (b.getHeight() * 0.5f, true));
+        g.setColour (on ? Colour (0xff7cc4ff) : kDim);
+        g.drawText (getButtonText(), b, Justification::centred);
+        return;
+    }
+    g.setColour (sel ? Colour (0xff15181b) : Colour (0xff1d2024));
+    g.fillRoundedRectangle (b, 5.0f);
+    if (sel)
+    {
+        g.setColour (VirusColours::blue.withAlpha (0.2f));
+        g.drawRoundedRectangle (b.expanded (1.0f), 6.0f, 2.5f);
+    }
+    g.setColour (sel ? VirusColours::blue : (highlighted ? Colour (0xff3a3f45) : Colour (0xff0c0d0f)));
+    g.drawRoundedRectangle (b.reduced (0.5f), 5.0f, 1.0f);
+    const auto font = CustomLookAndFeel::uiFont (jmin (12.5f, b.getHeight() * 0.55f), true);
+    const float tw = font.getStringWidthFloat (getButtonText());
+    float x = b.getCentreX() - tw * 0.5f;
+    if (isOn)
+    {
+        x += 8.0f;
+        const auto dot = Rectangle<float> (x - 16.0f, b.getCentreY() - 4.0f, 8.0f, 8.0f);
+        if (on) { g.setColour (VirusColours::blue.withAlpha (0.35f)); g.fillEllipse (dot.expanded (3.0f)); }
+        g.setColour (on ? VirusColours::blue : Colour (0xff3a3f45));
+        g.fillEllipse (dot);
+    }
+    g.setFont (font);
+    g.setColour (sel ? Colour (0xff7cc4ff) : kDim);
+    g.drawText (getButtonText(), Rectangle<float> (x, b.getY(), tw + 4.0f, b.getHeight()), Justification::centredLeft);
+}
+
+//==============================================================================
+std::unique_ptr<ParamAdapter> VCClonePanel::fx (AudioProcessor& p, const char* id, String label)
+{
+    for (auto* prm : p.getParameters())
+        if (auto* r = dynamic_cast<RangedAudioParameter*> (prm))
+            if (r->getParameterID() == id) return std::make_unique<ApvtsAdapter> (*r, std::move (label));
+    return nullptr;
+}
+
+VCClonePanel::Control* VCClonePanel::makeControl (std::unique_ptr<ParamAdapter> a, bool forceKnob)
+{
+    if (! a) return nullptr;
     auto c = std::make_unique<Control>();
     auto* adapter = a.get();
     c->adapter = std::move (a);
-    const auto items = adapter->items();
+    const auto list = adapter->items();
     const String fullName = adapter->name();
-
     auto touched = [this, adapter] { lcdName = adapter->name().toUpperCase(); lcdValue = adapter->text (adapter->get()); };
 
     if (adapter->isToggle())
     {
         c->kind = Control::Kind::Toggle;
-        std::unique_ptr<Button> b;
-        if (powerDot) b = std::make_unique<PowerDot>();
-        else b = std::make_unique<TextButton> (fullName);
+        auto b = std::make_unique<TextButton> ("OFF");
         b->setClickingTogglesState (true);
         b->setTooltip (fullName);
+        b->setColour (TextButton::textColourOnId, Colour (0xff06121e));
+        b->setColour (TextButton::textColourOffId, kDim);
         b->onClick = [adapter, bp = b.get(), touched]
         {
             adapter->beginGesture(); adapter->set (bp->getToggleState() ? 1 : 0); adapter->endGesture(); touched();
         };
         c->comp = std::move (b);
     }
-    else if (! items.isEmpty() && ! forceKnob)
+    else if (! list.isEmpty() && ! forceKnob)
     {
         c->kind = Control::Kind::Combo;
-        c->cells = 2;
         auto box = std::make_unique<VirusCombo>();
-        for (int i = 0; i < items.size(); ++i) box->addItem (items[i].isEmpty() ? String ("-") : items[i], i + 1);
+        for (int i = 0; i < list.size(); ++i) box->addItem (list[i].isEmpty() ? String ("-") : list[i], i + 1);
         box->setTooltip (fullName);
+        box->setColour (ComboBox::textColourId, Colours::white);
+        box->setColour (ComboBox::arrowColourId, Colours::white);
         box->onChange = [adapter, bp = box.get(), touched]
         {
             const int id = bp->getSelectedId();
             if (id > 0) { adapter->beginGesture(); adapter->set (adapter->minimum() + id - 1); adapter->endGesture(); touched(); }
         };
         box->onTouched = touched;
-        auto lbl = std::make_unique<Label> (String(), fullName.toUpperCase());
-        lbl->setFont (CustomLookAndFeel::uiFont (9.5f, true));
-        lbl->setColour (Label::textColourId, VirusColours::labelText);
-        lbl->setJustificationType (Justification::centredLeft);
-        lbl->setInterceptsMouseClicks (false, false);
-        lbl->setMinimumHorizontalScale (0.6f);
-        addChildComponent (*lbl);
-        c->label = std::move (lbl);
         c->comp = std::move (box);
     }
     else
     {
         c->kind = Control::Kind::Knob;
-        auto k = std::make_unique<VirusKnob> (VirusKnob::Size::Small, fullName);
+        auto k = std::make_unique<VirusKnob> (VirusKnob::Size::Small, fullName.toLowerCase());
         k->setRange (adapter->minimum(), adapter->maximum(), 1.0);
         k->setDefaultValue (adapter->defaultValue());
         k->valueText = [adapter] (double v) { return adapter->text (roundToInt (v)); };
@@ -188,700 +254,633 @@ VCClonePanel::Control* VCClonePanel::makeControl (std::unique_ptr<ParamAdapter> 
     return controls.back().get();
 }
 
-VCClonePanel::Panel& VCClonePanel::addPanel (String title, int page, int mode, int row,
-                                             std::vector<std::unique_ptr<ParamAdapter>> adapters, int group, int groupIndex)
+VCClonePanel::Item& VCClonePanel::place (int mode, Component* comp, Rectangle<int> r, String caption)
 {
-    Panel p;
-    p.title = std::move (title);
-    p.page = page; p.mode = mode; p.row = row; p.group = group; p.groupIndex = groupIndex;
-    int cells = 0;
-    for (auto& a : adapters)
-    {
-        auto* c = makeControl (std::move (a));
-        cells += c->cells;
-        p.controls.push_back (c);
-    }
-    p.cols = jmax (1, cells);
-    panels.push_back (std::move (p));
-    return panels.back();
+    Item it;
+    it.comp = comp; it.r = r; it.caption = std::move (caption); it.mode = mode; it.layer = curLayer;
+    if (comp) comp->setBounds (r);
+    items.push_back (it);
+    return items.back();
 }
 
-int VCClonePanel::addGroup (int page, int mode, int row, StringArray labels)
+VCClonePanel::Control* VCClonePanel::knob (int mode, std::unique_ptr<ParamAdapter> a, int x, int y, int w, int h)
 {
-    auto g = std::make_unique<Group>();
-    g->page = page; g->mode = mode; g->row = row; g->labels = labels;
-    const int gi = (int) groups.size();
-    for (int i = 0; i < labels.size(); ++i)
+    auto* c = makeControl (std::move (a), true);
+    if (c) place (mode, c->comp.get(), { x, y, w, h }).control = c;
+    return c;
+}
+
+VCClonePanel::Control* VCClonePanel::combo (int mode, std::unique_ptr<ParamAdapter> a, int x, int y, int w, String caption, int h)
+{
+    auto* c = makeControl (std::move (a));
+    if (c) place (mode, c->comp.get(), { x, y, w, h }, std::move (caption)).control = c;
+    return c;
+}
+
+VCClonePanel::Control* VCClonePanel::toggle (int mode, std::unique_ptr<ParamAdapter> a, int x, int y, int w, String caption, String onText)
+{
+    auto* c = makeControl (std::move (a));
+    if (! c) return nullptr;
+    c->comp->getProperties().set ("onText", onText);
+    place (mode, c->comp.get(), { x, y, w, 24 }, std::move (caption)).control = c;
+    return c;
+}
+
+VCClonePanel::Item& VCClonePanel::fixedBox (int mode, int x, int y, int w, String text, String caption)
+{
+    auto& it = place (mode, nullptr, { x, y, w, 24 }, std::move (caption));
+    it.fixedText = String::fromUTF8 ("\xe2\x86\x92 ") + text;
+    it.style = 1;
+    return it;
+}
+
+VCClonePanel::Item& VCClonePanel::rowLabel (int mode, int x, int y, int w, String text, String sub)
+{
+    auto& it = place (mode, nullptr, { x, y, w, 30 }, std::move (sub));
+    it.fixedText = std::move (text);
+    it.style = 2;
+    return it;
+}
+
+void VCClonePanel::separator (int mode, float x, float y, float w)
+{
+    separators.push_back ({ mode, curLayer, { x, y, w, 1.0f } });
+}
+
+int VCClonePanel::addTabs (int mode, Rectangle<int> area, StringArray names, std::vector<const char*> powerIds, bool small)
+{
+    auto g = std::make_unique<TabGroup>();
+    g->mode = mode;
+    const int gi = (int) tabGroups.size();
+    const int n = names.size(), gap = small ? 0 : 6;
+    const int w = (area.getWidth() - gap * (n - 1)) / jmax (1, n);
+    for (int i = 0; i < n; ++i)
     {
-        auto b = std::make_unique<TextButton> (labels[i]);
-        b->setClickingTogglesState (false);
-        b->onClick = [this, gi, i] { groups[(size_t) gi]->selected = i; updateVisibility(); repaint(); };
-        addChildComponent (*b);
+        auto b = std::make_unique<TabButton> (names[i], small);
+        auto* bp = b.get();
+        if (i < (int) powerIds.size() && powerIds[(size_t) i] != nullptr)
+        {
+            auto* prm = processor.apvts.getParameter (powerIds[(size_t) i]);
+            bp->isOn = [prm] { return prm->getValue() > 0.5f; };
+            bp->togglePower = [prm] { prm->beginChangeGesture(); prm->setValueNotifyingHost (prm->getValue() > 0.5f ? 0.0f : 1.0f); prm->endChangeGesture(); };
+            bp->setTooltip (small ? "Oscillator on / off" : "Click the dot to turn this oscillator on or off");
+        }
+        bp->onClick = [this, gi, i, bp]
+        {
+            if (bp->togglePower && (bp->small || bp->downX < 26)) { bp->togglePower(); bp->repaint(); return; }
+            tabGroups[(size_t) gi]->selected = i;
+            updateVisibility();
+            repaint();
+        };
+        addChildComponent (*bp);
+        place (mode, bp, small ? area : Rectangle<int> (area.getX() + i * (w + gap), area.getY(), w, area.getHeight()));
         g->buttons.push_back (std::move (b));
     }
-    groups.push_back (std::move (g));
+    tabGroups.push_back (std::move (g));
     return gi;
+}
+
+void VCClonePanel::setGroup (int group, int index, size_t fromItem)
+{
+    for (size_t i = fromItem; i < items.size(); ++i) { items[i].group = group; items[i].index = index; }
+}
+
+VCClonePanel::Card& VCClonePanel::card (int mode, Rectangle<float> r, String title, const char* powerId)
+{
+    Card c;
+    c.r = r; c.title = std::move (title); c.mode = mode; c.layer = curLayer;
+    if (powerId != nullptr)
+    {
+        auto adapter = host (powerId, "On");
+        auto pc = std::make_unique<Control>();
+        pc->kind = Control::Kind::Toggle;
+        auto* ad = adapter.get();
+        pc->adapter = std::move (adapter);
+        auto dot = std::make_unique<PowerDot>();
+        dot->setTooltip (c.title + " on / off");
+        dot->onClick = [ad, d = dot.get()] { ad->beginGesture(); ad->set (d->getToggleState() ? 1 : 0); ad->endGesture(); };
+        pc->comp = std::move (dot);
+        addChildComponent (*pc->comp);
+        controls.push_back (std::move (pc));
+        c.power = controls.back().get();
+        place (mode, c.power->comp.get(), { (int) r.getX() + 8, (int) r.getY() + 6, 18, 18 }).control = c.power;
+    }
+    cards.push_back (c);
+    return cards.back();
+}
+
+//==============================================================================
+// Cards shared by every mode: amplifier extras, step sequencer, arpeggiator, delay, reverb, distortion
+void VCClonePanel::buildShared()
+{
+    using AP = std::unique_ptr<ParamAdapter>;
+    auto H = [this] (const char* id, const char* l) -> AP { return host (id, l); };
+
+    // ENVELOPES: the global amp and filter envelopes (rows 1 and 2 in every mode), header switches
+    curLayer = 0;
+    {
+        card (-1, { 806, 78, 374, 226 }, "ENVELOPES");
+        toggle (-1, H (gid::useGlobalEnv, "Global ADSR"), 1006, 84, 52, {}, "GLOBAL");
+        toggle (-1, H (gid::ampSync, "Amp Sync"), 1062, 84, 54, {}, "SYNC A");
+        toggle (-1, H (gid::fltSync, "Filter Sync"), 1120, 84, 54, {}, "SYNC F");
+        const char* amp[] = { gid::ampA, gid::ampD, gid::ampS, gid::ampR };
+        const char* flt[] = { gid::fltA, gid::fltD, gid::fltS, gid::fltR };
+        const char* adsr[] = { "a", "d", "s", "r" };
+        rowLabel (-1, 816, 116, 52, "AMP", "volume");
+        rowLabel (-1, 816, 165, 52, "FILTER", "cutoff");
+        for (int i = 0; i < 4; ++i)
+        {
+            knob (-1, H (amp[i], adsr[i]), 870 + i * 38, 108, 38, 46);
+            knob (-1, H (flt[i], adsr[i]), 870 + i * 38, 157, 38, 46);
+        }
+        knob (-1, H (gid::velocity, "vel"), 1022, 108, 50, 46);
+        fixedBox (-1, 1074, 114, 96, "Volume", "send to");
+        knob (-1, H (gid::envAmt, "amount"), 1022, 157, 50, 46);
+        fixedBox (-1, 1074, 163, 96, "Cutoff", "send to");
+        separator (-1, 816, 153, 354);
+        separator (-1, 816, 202, 354);
+        separator (-1, 816, 251, 354);
+    }
+    curLayer = -1;
+
+    // AMPLIFIER: the global crossover (mono below) and phase lock
+    card (-1, { 898, 314, 282, 104 }, "AMPLIFIER");
+    knob (-1, H (gid::monoHz, "mono hz"), 1066, 350, 54, 52);
+    knob (-1, H (gid::lockHz, "ph lock"), 1120, 350, 54, 52);
+
+    // STEP SEQUENCER (ArpSampler): swing, key, scale, scale lock, the step grid; Randomise and Drag MIDI
+    auto& seqState = processor.stepSequencer().state();
+    auto Q = [&] (const char* id, const char* l) -> AP { return std::make_unique<ApvtsAdapter> (*seqState.getParameter (id), l); };
+    card (-1, { 20, 428, 432, 178 }, "STEP SEQUENCER", gid::arpMode);
+    rowLabel (-1, 30, 460, 30, "KEY", {}).style = 3;
+    combo (-1, Q ("scaleKey", "Key"), 62, 464, 52, {}, 22);
+    rowLabel (-1, 122, 460, 44, "SCALE", {}).style = 3;
+    combo (-1, Q ("scale", "Scale"), 166, 464, 120, {}, 22);
+    toggle (-1, Q ("scaleLock", "Scale Lock"), 294, 464, 100, {}, "SCALE LOCK");
+    randomiseButton.setTooltip ("Randomise the steps (follows the key and scale when Scale Lock is on)");
+    randomiseButton.onClick = [this] { processor.stepSequencer().randomise(); lcdName = "STEP SEQUENCER"; lcdValue = "RANDOMISED"; };
+    addChildComponent (randomiseButton);
+    place (-1, &randomiseButton, { 236, 434, 98, 22 });
+    dragHandle = vendor::StepSequencer::createDragHandle ([this]
+    {
+        return processor.stepSequencer().exportMidi (processor.currentBpm.load(), processor.getLastHeldNotes());
+    });
+    addChildComponent (*dragHandle);
+    place (-1, dragHandle.get(), { 340, 434, 102, 22 });
+    stepGrid = processor.stepSequencer().createPanel();
+    addChildComponent (*stepGrid);
+    place (-1, stepGrid.get(), { 28, 494, 416, 106 });
+    // the grid at 3/4 size, so every lane fits the card
+    stepGrid->setBounds (0, 0, 555, 141);
+    stepGrid->setTransform (AffineTransform::scale (0.75f).translated (28.0f, 494.0f));
+
+    // ARPEGGIATOR: the sequencer's playback (pattern, speed, rate type)
+    card (-1, { 20, 616, 432, 96 }, "ARPEGGIATOR");
+    combo (-1, Q ("arpMode", "Mode"), 30, 654, 92, "mode");
+    combo (-1, Q ("arpRate", "Speed"), 128, 654, 70, "speed");
+    combo (-1, Q ("arpRateType", "Type"), 204, 654, 86, "type");
+    knob (-1, Q ("arpSwing", "swing"), 294, 644, 50, 54);
+    knob (-1, Q ("arpGate", "gate"), 344, 644, 50, 54);
+    knob (-1, Q ("arpOctave", "octave"), 394, 644, 52, 54);
+
+    // DELAY (Virus Delay)
+    auto& dl = processor.delayProcessor();
+    card (-1, { 462, 428, 290, 178 }, "DELAY", gid::delayOn);
+    {
+        const std::pair<const char*, const char*> k[] = { { "send", "send" }, { "feedback", "fbk" }, { "depth", "depth" }, { "color", "color" }, { "rate", "rate" } };
+        for (int i = 0; i < 5; ++i) knob (-1, fx (dl, k[i].first, k[i].second), 470 + i * 55, 464, 54, 54);
+        combo (-1, fx (dl, "mode", "Type"), 478, 548, 122, "type");
+        combo (-1, fx (dl, "clock", "Clock"), 614, 548, 122, "time");
+    }
+    // REVERB (LeadVerb)
+    auto& rv = processor.reverbProcessor();
+    card (-1, { 762, 428, 186, 178 }, "REVERB", gid::reverbOn);
+    {
+        combo (-1, fx (rv, "mode", "Mode"), 868, 434, 74, {}, 20);
+        const std::pair<const char*, const char*> k[] = { { "dryWet", "mix" }, { "decay", "decay" }, { "predelay", "pre-dly" },
+                                                          { "damp", "damp" }, { "color", "color" }, { "wide", "wide" } };
+        for (int i = 0; i < 6; ++i) knob (-1, fx (rv, k[i].first, k[i].second), 768 + (i % 3) * 58, i < 3 ? 464 : 534, 58, 54);
+    }
+    // DISTORTION (Virus saturation)
+    card (-1, { 958, 428, 222, 178 }, "DISTORTION", gid::distOn);
+    combo (-1, H (gid::satCurve, "Curve"), 976, 470, 186, "curve", 30);
+    knob (-1, H (gid::satDrive, "drive"), 1002, 520, 70, 70);
+    knob (-1, H (gid::satMix, "mix"), 1088, 526, 56, 58);
+
+    card (-1, { 462, 616, 124, 96 }, "GLIDE");
+    card (-1, { 596, 616, 232, 96 }, "PITCH");
+    card (-1, { 838, 616, 124, 96 }, "VOICES");
 }
 
 //==============================================================================
 void VCClonePanel::buildVirus()
 {
-    constexpr int M = (int) vc::SynthMode::Virus;
-    auto offs = [this] (std::vector<int> o) { std::vector<std::unique_ptr<ParamAdapter>> v; for (int x : o) v.push_back (virus (x)); return v; };
-    // (oscillators, filters, LFO 1/2 are on the compact Synth page: buildSynthPages)
-    addPanel ("Patch", PageMod, M, 0, offs ({ Panorama, Portamento_Time, Patch_Volume, Amp_Velocity, Punch_Intensity, Transpose, Key_Mode }));
-    addPanel ("Unison", PageMod, M, 0, offs (regionOffsets ("unison")));
-    addPanel ("Filter Velocity / Saturation", PageMod, M, 0, offs ({ Flt1_EnvAmt_Velocity, Flt2_EnvAmt_Velocity, Resonance1_Velocity,
-                                                                              Resonance2_Velocity, Saturation_Curve, Filter_Keytrack_Base }));
-    // MOD: LFOs, the patch's own envelopes (used when Global ADSR is off), common
-    addPanel ("LFO 3", PageMod, M, 2, offs (regionOffsets ("lfoC")));
-    addPanel ("LFO 1 (all)", PageMod, M, 1, offs (regionOffsets ("lfoA")));
-    addPanel ("LFO 2 (all)", PageMod, M, 2, offs (regionOffsets ("lfoB")));
-    addPanel ("Bender", PageMod, M, 2, offs ({ Bender_Range_Up, Bender_Range_Down, Bender_Scale }));
-    addPanel ("Patch Filter Env", PageMod, M, 3, offs (regionOffsets ("envFilter")));
-    addPanel ("Patch Amp Env", PageMod, M, 3, offs (regionOffsets ("envAmp")));
-    addPanel ("Tempo", PageMod, M, 3, offs ({ Clock_Tempo, Channel_Volume, Panorama_Velocity }));
-    // MATRIX
-    addPanel ("Assign 1", PageMatrix, M, 0, offs (regionOffsets ("assignA")));
-    addPanel ("Assign 2", PageMatrix, M, 0, offs (regionOffsets ("assignB")));
-    addPanel ("Assign 3", PageMatrix, M, 1, offs (regionOffsets ("assignC")));
-    addPanel ("Assign 4", PageMatrix, M, 2, offs (regionOffsets ("assignD")));
-    addPanel ("Assign 5", PageMatrix, M, 2, offs (regionOffsets ("assignE")));
-    addPanel ("Assign 6", PageMatrix, M, 3, offs (regionOffsets ("assignF")));
+    using AP = std::unique_ptr<ParamAdapter>;
+    auto Vp = [this] (int o, const char* l) -> AP { return VCCloneAudioProcessor::isHostParameter (o) ? virus (o, l) : nullptr; };
+    auto H = [this] (const char* id, const char* l) -> AP { return host (id, l); };
+    auto oct = [&] (int o) -> AP { return std::make_unique<OctaveAdapter> (Vp (o, "octave"), 64); };
+    auto cut = [] (AP a, const char* l) -> AP { return a ? std::make_unique<CutoffAdapter> (std::move (a), l) : nullptr; };
+
+    // OSCILLATORS: three rows, a numbered on/off badge each; unison and sub / noise / ring underneath
+    card (V, { 20, 78, 432, 340 }, "OSCILLATORS");
+    struct Row { int semi, model; const char* modelId; int k3, k4, k5; const char *l3, *l4, *l5; };
+    const Row rows[] = {
+        { Osc1_Semitone, -1, gid::virusOscModel[0], Osc1_Shape, Osc1_Pulsewidth, Osc1_Wave_Select, "shape", "pw", "wave" },
+        { Osc2_Semitone, -1, gid::virusOscModel[1], Osc2_Shape, Osc2_Pulsewidth, Osc2_Detune, "shape", "pw", "detune" },
+        { Osc3_Semitone, Osc3_Mode, nullptr, Osc3_Detune, Osc3_Volume, -1, "detune", "level", "" },
+    };
+    for (int i = 0; i < 3; ++i)
+    {
+        const auto& r = rows[i];
+        const int y = 116 + i * 70;
+        addTabs (V, { 32, y + 6, 34, 34 }, { String (i + 1) }, { gid::oscOn[i] }, true);
+        knob (V, oct (r.semi), 72, y, 50, 52);
+        knob (V, Vp (r.semi, "semi"), 122, y, 50, 52);
+        if (r.modelId) combo (V, H (r.modelId, "Model"), 176, y + 8, 110, "model");
+        else combo (V, Vp (r.model, "Mode"), 176, y + 8, 110, "mode");
+        knob (V, Vp (r.k3, r.l3), 290, y, 50, 52);
+        knob (V, Vp (r.k4, r.l4), 340, y, 50, 52);
+        if (r.k5 >= 0) knob (V, Vp (r.k5, r.l5), 390, y, 54, 52);
+    }
+    separator (V, 32, 330, 408);
+    const std::pair<int, const char*> bottom[] = { { Suboscillator_Volume, "sub" }, { Noise_Volume, "noise" }, { Ringmodulator_Volume, "ring" },
+                                                   { Unison_Mode, "voices" }, { Unison_Detune, "detune" }, { Unison_Pan_Spread, "spread" } };
+    for (int i = 0; i < 6; ++i) knob (V, Vp (bottom[i].first, bottom[i].second), 28 + i * 48, 344, 48, 52);
+    for (int i = 0; i < 3; ++i) toggle (V, H (gid::virusRetrig[i], "Retrig"), 322 + i * 40, 352, 36, "retrig " + String (i + 1), String (i + 1));
+
+    // LFOS: three rows; each sends to the target in its dropdown
+    curLayer = 0;
+    card (V, { 462, 78, 334, 226 }, "LFOS");
+    struct L { int shape, rate, amount, clock, dest; };
+    const L lfos[] = { { Lfo1_Shape, Lfo1_Rate, LFO1_Assign_Amount, Lfo1_Clock, LFO1_Assign_Dest },
+                       { Lfo2_Shape, Lfo2_Rate, LFO2_Assign_Amount, Lfo2_Clock, LFO2_Assign_Dest },
+                       { Lfo3_Shape, Lfo3_Rate, Osc_Lfo3_Amount, Lfo3_Clock, Lfo3_Destination } };
+    for (int i = 0; i < 3; ++i)
+    {
+        const int y = 114 + i * 62;
+        rowLabel (V, 472, y + 8, 26, String (i + 1), {});
+        combo (V, Vp (lfos[i].shape, "Shape"), 498, y + 6, 58, "shape");
+        knob (V, Vp (lfos[i].rate, "rate"), 558, y, 44, 50);
+        knob (V, Vp (lfos[i].amount, "amount"), 602, y, 48, 50);
+        combo (V, Vp (lfos[i].clock, "Clock"), 652, y + 6, 46, "clock");
+        combo (V, Vp (lfos[i].dest, "Send To"), 702, y + 6, 84, "send to");
+        if (i < 2) separator (V, 472, (float) y + 58, 314);
+    }
+
+    // ENVELOPES rows 1-2 (global amp / filter), row 3: the filter envelope also bends osc 2 and FM
+    rowLabel (V, 816, 214, 52, "F.ENV", "also to");
+    knob (V, Vp (Osc2_Filt_Env_Amt, "pitch 2"), 874, 206, 56, 46);
+    fixedBox (V, 934, 212, 86, "Pitch 2", "send to");
+    knob (V, Vp (FM_Filt_Env_Amt, "fm"), 1022, 206, 50, 46);
+    fixedBox (V, 1074, 212, 96, "FM", "send to");
+    curLayer = -1;
+
+    // FILTER: F1, F2 and the global filter on tabs
+    card (V, { 462, 314, 426, 104 }, "FILTER", nullptr);
+    const int fg = addTabs (V, { 696, 320, 184, 20 }, { "F1", "F2", "GLOBAL" }, {}, false);
+    size_t from = items.size();
+    combo (V, Vp (Filter1_Mode, "Type"), 474, 358, 104, "type");
+    knob (V, cut (Vp (Cutoff, "cutoff"), "cutoff"), 584, 346, 62, 64);
+    knob (V, Vp (Filter1_Resonance, "reso"), 650, 350, 46, 52);
+    knob (V, Vp (Filter1_Env_Amt, "env"), 696, 350, 46, 52);
+    knob (V, Vp (Filter1_Keyfollow, "keytrk"), 742, 350, 46, 52);
+    knob (V, Vp (Filter_Balance, "balance"), 788, 350, 46, 52);
+    combo (V, Vp (Filter_Routing, "Routing"), 836, 358, 46, "route");
+    setGroup (fg, 0, from); from = items.size();
+    combo (V, Vp (Filter2_Mode, "Type"), 474, 358, 104, "type");
+    knob (V, cut (Vp (Cutoff2, "cutoff 2"), "cutoff 2"), 584, 346, 62, 64);
+    knob (V, Vp (Filter2_Resonance, "reso"), 650, 350, 46, 52);
+    knob (V, Vp (Filter2_Env_Amt, "env"), 696, 350, 46, 52);
+    knob (V, Vp (Filter2_Keyfollow, "keytrk"), 742, 350, 46, 52);
+    toggle (V, Vp (Filter2_Cutoff_Link, "Link"), 792, 358, 42, "link");
+    setGroup (fg, 1, from);
+
+    // AMPLIFIER (mode part)
+    knob (V, Vp (Patch_Volume, "volume"), 904, 350, 54, 52);
+    knob (V, Vp (Panorama, "pan"), 958, 350, 54, 52);
+    knob (V, Vp (Amp_Velocity, "velocity"), 1012, 350, 54, 52);
+
+    knob (V, Vp (Portamento_Time, "time"), 494, 646, 60, 56);
+    knob (V, Vp (Bender_Range_Up, "bend up"), 606, 646, 54, 56);
+    knob (V, Vp (Bender_Range_Down, "bend dn"), 662, 646, 54, 56);
+    knob (V, Vp (Transpose, "transpose"), 718, 646, 60, 56);
+    combo (V, Vp (Key_Mode, "Key Mode"), 852, 656, 96, "key mode");
 }
 
 void VCClonePanel::buildSylenth()
 {
     using namespace vc::sylenth;
-    constexpr int M = (int) vc::SynthMode::Sylenth;
-    auto syl = [this] (std::vector<std::pair<int, const char*>> list)
+    using AP = std::unique_ptr<ParamAdapter>;
+    auto S = [this] (int i, const char* l) -> AP { return std::make_unique<SylenthAdapter> (processor, i, l); };
+    auto cut = [] (AP a, const char* l) -> AP { return std::make_unique<CutoffAdapter> (std::move (a), l); };
+
+    card (SY, { 20, 78, 432, 340 }, "OSCILLATORS");
+    const int og = addTabs (SY, { 32, 112, 408, 28 }, { "A1", "A2", "B1", "B2" }, { gid::oscOn[0], gid::oscOn[1], gid::oscOn[2], gid::oscOn[3] }, false);
+    for (int k = 0; k < 4; ++k)
     {
-        std::vector<std::unique_ptr<ParamAdapter>> v;
-        for (auto& [i, l] : list) v.push_back (std::make_unique<SylenthAdapter> (processor, i, l));
-        return v;
-    };
-    auto osc = [&] (int o)
-    {
-        const int b = OscBase + o * OscStride;
-        return syl ({ { b + oWave, "Wave" }, { b + oVoices, "Voices" }, { b + oOctave, "Octave" }, { b + oNote, "Note" },
-                      { b + oFine, "Fine" }, { b + oDetune, "Detune" }, { b + oStereo, "Stereo" }, { b + oVolume, "Volume" },
-                      { b + oPan, "Pan" }, { b + oPhase, "Phase" }, { b + oRetrig, "Retrig" }, { b + oInvert, "Invert" },
-                      { b + oKeytrack, "Keytrack" } });
-    };
-    auto filt = [&] (int b) { return syl ({ { b, "Type" }, { b + 1, "Slope" }, { b + 2, "Cutoff" }, { b + 3, "Reso" }, { b + 4, "Drive" },
-                                             { b == FiltA ? FiltAInput : FiltBInput, "Input" } }); };
-    // (oscillators, filters, LFOs and voicing are on the compact Synth page: buildSynthPages)
-    (void) osc; (void) filt;
-    auto modEnv = [&] (int b) { return syl ({ { b, "Attack" }, { b + 1, "Decay" }, { b + 2, "Sustain" }, { b + 3, "Release" },
-                                               { b + 4, "Dest 1" }, { b + 5, "Amt 1" }, { b + 6, "Dest 2" }, { b + 7, "Amt 2" } }); };
-    auto lfo = [&] (int b) { return syl ({ { b, "Wave" }, { b + 1, "Rate" }, { b + 2, "Sync" }, { b == Lfo1 ? Lfo1Free : Lfo2Free, "Free" },
-                                            { b + 3, "Gain" }, { b + 4, "Offset" },
-                                            { b + 5, "Dest 1" }, { b + 6, "Amt 1" }, { b + 7, "Dest 2" }, { b + 8, "Amt 2" } }); };
-    addPanel ("Mod Env 1", PageMod, M, 0, modEnv (Mod1));
-    addPanel ("Mod Env 2", PageMod, M, 1, modEnv (Mod2));
-    (void) lfo;
-    addPanel ("Patch Amp Env A", PageMod, M, 0, syl ({ { AmpA, "Attack" }, { AmpA + 1, "Decay" }, { AmpA + 2, "Sustain" }, { AmpA + 3, "Release" } }));
-    addPanel ("Patch Amp Env B", PageMod, M, 1, syl ({ { AmpB, "Attack" }, { AmpB + 1, "Decay" }, { AmpB + 2, "Sustain" }, { AmpB + 3, "Release" } }));
-    // the four misc modulation slots on the Matrix page
-    const char* miscNames[] = { "Misc 1A", "Misc 1B", "Misc 2A", "Misc 2B" };
-    for (int m = 0; m < 4; ++m)
-    {
-        const int b = Misc + m * 5;
-        addPanel (miscNames[m], PageMatrix, M, m, syl ({ { b, "Source" }, { b + 1, "Dest 1" }, { b + 2, "Amt 1" }, { b + 3, "Dest 2" }, { b + 4, "Amt 2" } }));
+        const size_t from = items.size();
+        const int b = OscBase + k * OscStride;
+        auto* w = makeControl (S (b + oWave, "Wave"));
+        place (SY, w->comp.get(), { 32, 236, 96, 24 }, "wave").control = w;
+        auto sc = std::make_unique<WaveScope>();
+        auto* wa = w->adapter.get();
+        sc->fn = [wa] (float p) { return waveByName (wa->text (wa->get()), p); };
+        auto* vo = S (b + oVoices, "voices").release();
+        std::unique_ptr<ParamAdapter> voicesHolder (vo);
+        sc->layers = [vo] { return jlimit (1, 5, vo->get() + 1); };
+        addChildComponent (*sc);
+        place (SY, sc.get(), { 32, 148, 408, 70 });
+        scopes.push_back (std::move (sc));
+        knob (SY, std::move (voicesHolder), 132, 226, 52, 52);
+        knob (SY, S (b + oDetune, "detune"), 184, 226, 52, 52);
+        knob (SY, S (b + oOctave, "octave"), 236, 226, 52, 52);
+        knob (SY, S (b + oNote, "note"), 288, 226, 52, 52);
+        knob (SY, S (b + oFine, "fine"), 340, 226, 52, 52);
+        toggle (SY, S (b + oKeytrack, "Keytrack"), 396, 234, 44, "keytrk");
+        knob (SY, S (b + oVolume, "volume"), 28, 286, 52, 52);
+        knob (SY, S (b + oPan, "pan"), 80, 286, 52, 52);
+        knob (SY, S (b + oPhase, "phase"), 132, 286, 52, 52);
+        knob (SY, S (b + oStereo, "stereo"), 184, 286, 52, 52);
+        toggle (SY, S (b + oRetrig, "Retrig"), 244, 294, 50, "retrig");
+        toggle (SY, S (b + oInvert, "Invert"), 300, 294, 50, "invert");
+        setGroup (og, k, from);
     }
+    separator (SY, 32, 350, 408);
+    knob (SY, S (MixA, "mix A"), 28, 358, 52, 52);
+    knob (SY, S (MixB, "mix B"), 80, 358, 52, 52);
+    combo (SY, S (FiltAInput, "Filter A Input"), 140, 366, 92, "filter A in");
+    combo (SY, S (FiltBInput, "Filter B Input"), 240, 366, 92, "filter B in");
+
+    // LFOS: two rows and their second targets
+    curLayer = 0;
+    card (SY, { 462, 78, 334, 226 }, "LFOS");
+    for (int l = 0; l < 2; ++l)
+    {
+        const int b = l == 0 ? Lfo1 : Lfo2, y = 116 + l * 64;
+        rowLabel (SY, 472, y + 8, 26, String (l + 1), {});
+        combo (SY, S (b, "Wave"), 498, y + 6, 58, "shape");
+        knob (SY, S (b + 1, "rate"), 558, y, 44, 50);
+        knob (SY, S (b + 6, "amount"), 602, y, 48, 50);
+        combo (SY, S (b + 2, "Sync"), 652, y + 6, 46, "sync");
+        combo (SY, S (b + 5, "Send To"), 702, y + 6, 84, "send to");
+        separator (SY, 472, (float) y + 58, 314);
+    }
+    for (int l = 0; l < 2; ++l)
+    {
+        const int b = l == 0 ? Lfo1 : Lfo2, x = 500 + l * 144;
+        combo (SY, S (b + 7, "Send To 2"), x, 254, 84, "LFO " + String (l + 1) + " also to");
+        knob (SY, S (b + 8, "amt"), x + 86, 246, 46, 50);
+    }
+
+    // ENVELOPES rows 3-4: the two mod envelopes, each with a send-to target
+    for (int e = 0; e < 2; ++e)
+    {
+        const int b = e == 0 ? Mod1 : Mod2, y = 206 + e * 48;
+        rowLabel (SY, 816, y + 8, 52, "MOD " + String (e + 1), e == 0 ? "filter" : "free");
+        for (int i = 0; i < 4; ++i) knob (SY, S (b + i, i == 0 ? "a" : i == 1 ? "d" : i == 2 ? "s" : "r"), 870 + i * 38, y, 38, 46);
+        knob (SY, S (b + 5, "amount"), 1022, y, 50, 46);
+        combo (SY, S (b + 4, "Send To"), 1074, y + 6, 96, "send to");
+    }
+    curLayer = -1;
+
+    // FILTER: A, B, control
+    card (SY, { 462, 314, 426, 104 }, "FILTER");
+    const int fg = addTabs (SY, { 664, 320, 216, 20 }, { "A", "B", "CONTROL" }, {}, false);
+    for (int k = 0; k < 2; ++k)
+    {
+        const size_t from = items.size();
+        const int b = k == 0 ? FiltA : FiltB;
+        combo (SY, S (b, "Type"), 474, 358, 100, "type");
+        knob (SY, cut (S (b + 2, "cutoff"), "cutoff"), 580, 346, 62, 64);
+        knob (SY, S (b + 3, "reso"), 646, 350, 50, 52);
+        knob (SY, S (b + 4, "drive"), 696, 350, 50, 52);
+        combo (SY, S (b + 1, "Slope"), 752, 358, 62, "slope");
+        setGroup (fg, k, from);
+    }
+    {
+        const size_t from = items.size();
+        knob (SY, cut (S (FCtl, "cutoff"), "cutoff"), 480, 346, 62, 64);
+        knob (SY, S (FCtl + 1, "reso"), 548, 350, 50, 52);
+        knob (SY, S (FCtl + 2, "warm drive"), 600, 350, 60, 52);
+        knob (SY, S (FCtl + 3, "keytrk"), 662, 350, 50, 52);
+        setGroup (fg, 2, from);
+    }
+
+    knob (SY, S (MainVol, "volume"), 904, 350, 54, 52);
+    toggle (SY, S (Legato, "Legato"), 962, 358, 50, "legato");
+    toggle (SY, S (Mono, "Mono"), 1014, 358, 48, "mono");
+    knob (SY, S (Porta, "time"), 494, 646, 60, 56);
+    knob (SY, S (BendRange, "bend"), 610, 646, 56, 56);
+    combo (SY, S (PortaMode, "Porta Mode"), 680, 656, 132, "glide mode");
+    knob (SY, S (Polyphony, "poly"), 868, 646, 64, 56);
 }
 
 void VCClonePanel::buildSpire()
 {
-    constexpr int M = (int) vc::SynthMode::Spire;
-    struct D { int idx; const char* label; SpK kind; StringArray list; };
-    auto spr = [this] (std::vector<D> list)
-    {
-        std::vector<std::unique_ptr<ParamAdapter>> v;
-        for (auto& d : list) v.push_back (std::make_unique<SpireAdapter> (processor, d.idx, d.label, d.kind, d.list));
-        return v;
-    };
+    using AP = std::unique_ptr<ParamAdapter>;
+    const int M = SPm;
+    auto P = [this] (int i, const char* l, SpK k, StringArray list = {}) -> AP { return std::make_unique<SpireAdapter> (processor, i, l, k, list); };
+    auto cut = [] (AP a, const char* l) -> AP { return std::make_unique<CutoffAdapter> (std::move (a), l); };
     const auto waves = spWaves();
     const auto targets = spTargets();
-    // (oscillators, filters, LFOs, mixer and voice are on the compact Synth page: buildSynthPages)
-    (void) waves;
-    const int mg = addGroup (PageMatrix, M, 0, { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15" });
-    for (int s = 0; s < 15; ++s)
+
+    card (M, { 20, 78, 432, 340 }, "OSCILLATORS");
+    const int og = addTabs (M, { 32, 112, 408, 28 }, { "OSC 1", "OSC 2", "OSC 3", "OSC 4" }, { gid::oscOn[0], gid::oscOn[1], gid::oscOn[2], gid::oscOn[3] }, false);
+    const int mixIdx[4] = { sp::mix_osc1, sp::mix_osc2, sp::mix_osc3, sp::mix_osc4 };
+    for (int k = 0; k < 4; ++k)
     {
-        const int b = sp::slot1_Src1 + s * 10;
-        addPanel ("Matrix Slot " + String (s + 1), PageMatrix, M, 0,
-                  spr ({ { b, "Source 1", SpK::List, spSources() }, { b + 1, "Source 2", SpK::List, spSources() },
-                         { b + 3, "Target 1", SpK::List, targets }, { b + 2, "Amt 1", SpK::Signed, {} },
-                         { b + 5, "Target 2", SpK::List, targets }, { b + 4, "Amt 2", SpK::Signed, {} } }),
-                  mg, s);
-    }
-}
-
-void VCClonePanel::buildGlobal()
-{
-    // the global section (envelopes, global filter, voice / FX, arp, distortion) lives on the Synth page:
-    // see buildSynthPages
-}
-
-
-//==============================================================================
-// Compact Synth page: columns of sections per mode
-VCClonePanel::Control* VCClonePanel::makeSegment (std::unique_ptr<ParamAdapter> a)
-{
-    auto c = std::make_unique<Control>();
-    auto* adapter = a.get();
-    c->adapter = std::move (a);
-    c->kind = Control::Kind::Segment;
-    auto seg = std::make_unique<SegmentSelector> (*adapter);
-    seg->onTouched = [this, adapter] { lcdName = adapter->name().toUpperCase(); lcdValue = adapter->text (adapter->get()); };
-    c->comp = std::move (seg);
-    addChildComponent (*c->comp);
-    controls.push_back (std::move (c));
-    return controls.back().get();
-}
-
-VCClonePanel::Section& VCClonePanel::addSection (int mode, String title, Rectangle<float> bounds, std::unique_ptr<ParamAdapter> header,
-                                                 std::unique_ptr<ParamAdapter> hero, std::vector<std::unique_ptr<ParamAdapter>> body,
-                                                 int group, int groupIndex)
-{
-    Section sec;
-    sec.title = std::move (title);
-    sec.mode = mode;
-    sec.bounds = bounds;
-    sec.group = group;
-    sec.groupIndex = groupIndex;
-    if (header) sec.header = makeSegment (std::move (header));
-    if (hero) sec.hero = makeControl (std::move (hero), true);
-    for (auto& a : body)
-    {
-        if (! a) continue;
-        // short numeric lists (octave, voices, bend ...) are knobs that step through the list
-        bool knob = false;
-        const auto items = a->items();
-        if (! items.isEmpty())
-        {
-            knob = true;
-            for (auto& it : items) if (! it.trim().containsOnly ("0123456789+-. ")) { knob = false; break; }
-        }
-        sec.controls.push_back (makeControl (std::move (a), knob));
-    }
-    sections.push_back (std::move (sec));
-    return sections.back();
-}
-
-VCClonePanel::Section& VCClonePanel::addEnvSection (int mode, String title, Rectangle<float> bounds,
-                                                    std::vector<std::unique_ptr<ParamAdapter>> adsrAndMore)
-{
-    auto& sec = addSection (mode, std::move (title), bounds, nullptr, nullptr, std::move (adsrAndMore));
-    auto& c = sec.controls;
-    auto graph = std::make_unique<EnvelopeGraph> (*c[0]->adapter, *c[1]->adapter, *c[2]->adapter, *c[3]->adapter);
-    graph->onTouched = [this] (ParamAdapter& a) { lcdName = a.name().toUpperCase(); lcdValue = a.text (a.get()); };
-    addChildComponent (*graph);
-    sec.env = graph.get();
-    envGraphs.push_back (std::move (graph));
-    return sec;
-}
-
-int VCClonePanel::addHeaderGroup (int mode, StringArray labels)
-{
-    const int gi = addGroup (PageSynth, mode, -1, labels);
-    groups[(size_t) gi]->header = true;
-    return gi;
-}
-
-int VCClonePanel::addTabBar (int mode, StringArray labels, std::vector<std::unique_ptr<ParamAdapter>> powers)
-{
-    const int gi = addGroup (PageSynth, mode, -1, labels);
-    auto& g = *groups[(size_t) gi];
-    g.header = true;
-    g.tabBar = true;
-    for (auto& p : powers) g.powers.push_back (p ? makeControl (std::move (p), false, true) : nullptr);
-    return gi;
-}
-
-WaveScope* VCClonePanel::addScope (std::function<float (float)> fn, std::function<int()> layers)
-{
-    auto w = std::make_unique<WaveScope>();
-    w->fn = std::move (fn);
-    w->layers = std::move (layers);
-    addChildComponent (*w);
-    scopes.push_back (std::move (w));
-    return scopes.back().get();
-}
-
-bool VCClonePanel::sectionVisible (const Section& s) const
-{
-    if (currentPage != PageSynth || (s.mode >= 0 && s.mode != currentMode())) return false;
-    if (s.subGroup >= 0 && groups[(size_t) s.subGroup]->selected != s.subGroupIndex) return false;
-    return s.group < 0 || groups[(size_t) s.group]->selected == s.groupIndex;
-}
-
-void VCClonePanel::buildSynthPages()
-{
-    // Rows: [Osc 1 | Amp Env | Osc 2] [Osc 3 | Filter Env | Osc 4] [Filters | display (Arp, Distortion, Delay, Reverb) | Global filter + Voice]
-    //       [modulation along the bottom]
-    constexpr float L = 6.0f, R = (float) kWidth - 6.0f, gap = 4.0f;
-    constexpr float oscW = 444.0f, oscH = 116.0f, midH = 300.0f;
-    constexpr float rowA = (float) kContentY, rowB = rowA + oscH + gap, rowC = rowB + oscH + gap, rowD = rowC + midH + gap;
-    constexpr float botH = (float) kBottomY - 2.0f - rowD;
-    constexpr float cX = L + oscW + gap, cW = R - oscW - gap - cX;
-    constexpr float sideW = 280.0f, dispX = L + sideW + gap, dispW = R - sideW - gap - dispX;
-    displayArea = { dispX, rowC, dispW, midH };
-    const Rectangle<float> osc1 { L, rowA, oscW, oscH }, osc2 { R - oscW, rowA, oscW, oscH };
-    const Rectangle<float> osc3 { L, rowB, oscW, oscH }, osc4 { R - oscW, rowB, oscW, oscH };
-    const Rectangle<float> ampEnv { cX, rowA, cW, oscH }, fltEnv { cX, rowB, cW, oscH };
-    const Rectangle<float> leftMid { L, rowC, sideW, midH }, rightMid { R - sideW, rowC, sideW, midH };
-    using AP = std::unique_ptr<ParamAdapter>;
-    using List = std::vector<AP>;
-    auto stack = [&] (Rectangle<float> area, std::vector<float> weights)
-    {
-        std::vector<Rectangle<float>> r;
-        float total = 0; for (auto w : weights) total += w;
-        const float scale = (area.getHeight() - gap * (float) (weights.size() - 1)) / total;
-        float y = area.getY();
-        for (auto w : weights) { r.push_back ({ area.getX(), y, area.getWidth(), w * scale }); y += w * scale + gap; }
-        return r;
-    };
-    auto bottom = [&] (int n)
-    {
-        std::vector<Rectangle<float>> r;
-        const float w = (R - L - gap * (float) (n - 1)) / (float) n;
-        for (int i = 0; i < n; ++i) r.push_back ({ L + (w + gap) * (float) i, rowD, w, botH });
-        return r;
-    };
-    auto list = [] (auto&&... a) { List v; (v.push_back (std::move (a)), ...); return v; };
-    auto cut = [] (AP a, const char* label = "Cutoff") -> AP { return a ? std::make_unique<CutoffAdapter> (std::move (a), label) : nullptr; };
-    auto H = [this] (const char* id, const char* label) -> AP { return host (id, label); };
-
-    // shared per mode: the global envelopes, the global filter and the voice block
-    auto shared = [&] (int M, List voice)
-    {
-        addEnvSection (M, "Amp Env", ampEnv, list (H (gid::ampA, "A"), H (gid::ampD, "D"), H (gid::ampS, "S"), H (gid::ampR, "R"),
-                                                   H (gid::ampSync, "Sync"), H (gid::useGlobalEnv, "Global")));
-        addEnvSection (M, "Filter Env", fltEnv, list (H (gid::fltA, "A"), H (gid::fltD, "D"), H (gid::fltS, "S"), H (gid::fltR, "R"),
-                                                      H (gid::fltSync, "Sync")));
-        const auto r = stack (rightMid, { 1.0f, 1.0f });
-        addSection (M, "Global Filter", r[0], H (gid::filterMode, "Type"), cut (H (gid::cutoff, "Cutoff")),
-                    list (H (gid::reso, "Res"), H (gid::envAmt, "Env"), H (gid::keytrack, "Key"), H (gid::velocity, "Vel")));
-        voice.insert (voice.begin(), H (gid::lockHz, "Phase Lock"));
-        voice.insert (voice.begin(), H (gid::monoHz, "Mono"));
-        voice.insert (voice.begin(), H (gid::reverbOn, "Reverb"));
-        voice.insert (voice.begin(), H (gid::delayOn, "Delay"));
-        voice.insert (voice.begin(), H (gid::volume, "Volume"));
-        addSection (M, "Voice / FX", r[1], nullptr, nullptr, std::move (voice));
-    };
-
-    // ---- the centre display: Arp, Distortion, Delay, Reverb (same in every mode) ------------
-    {
-        const auto inner = displayArea.reduced (6.0f).withTrimmedTop (24.0f);
-        // ArpSampler's step sequencer: mode, rate, gate, swing, octaves, key lock with scales; Randomise and
-        // Drag MIDI sit at the right of this row (placed in layoutEmbedded)
-        auto& seqState = processor.stepSequencer().state();
-        auto Q = [&] (const char* id, const char* label) -> AP { return std::make_unique<ApvtsAdapter> (*seqState.getParameter (id), label); };
-        auto& arp = addSection (-1, "Step Sequencer", inner.withHeight (70.0f).withTrimmedRight (122.0f), H (gid::arpMode, "Arp"), nullptr,
-                                list (Q ("arpMode", "Mode"), Q ("arpRate", "Rate"), Q ("arpRateType", "Type"), Q ("arpGate", "Gate"),
-                                      Q ("arpSwing", "Swing"), Q ("arpOctave", "Oct"), Q ("scaleKey", "Key"), Q ("scale", "Scale"),
-                                      Q ("scaleLock", "Lock")));
-        arp.tab = TabArp;
-        randomiseButton.setTooltip ("Randomise the steps (ArpSampler's randomiser; follows Key Lock and the scale)");
-        randomiseButton.onClick = [this] { processor.stepSequencer().randomise(); lcdName = "ARP"; lcdValue = "RANDOMISED"; };
-        addChildComponent (randomiseButton);
-        dragHandle = vendor::StepSequencer::createDragHandle ([this]
-        {
-            return processor.stepSequencer().exportMidi (processor.currentBpm.load(), processor.getLastHeldNotes());
-        });
-        addChildComponent (*dragHandle);
-        auto& dist = addSection (-1, "Distortion (Virus Saturation)", inner.withSizeKeepingCentre (inner.getWidth() * 0.7f, 120.0f), nullptr, nullptr,
-                                 list (H (gid::satCurve, "Curve"), H (gid::satDrive, "Drive"), H (gid::satMix, "Mix")));
-        dist.tab = TabDistort;
-        const char* tabNames[] = { "ARP", "MOD", "DISTORT", "DELAY", "REVERB" };
-        for (int i = 0; i < NumDisplayTabs; ++i)
-        {
-            auto& t = displayTabs[(size_t) i];
-            t.setButtonText (tabNames[i]);
-            t.onClick = [this, i] { displayTab = i; currentPage = PageSynth; updateVisibility(); repaint(); };
-            addChildComponent (t);
-        }
+        const size_t from = items.size();
+        const int b = sp::osc1_type + k * 19;
+        auto* t = makeControl (P (b, "Mode", SpK::List, kSpOscTypes));
+        place (M, t->comp.get(), { 32, 236, 96, 24 }, "mode").control = t;
+        auto sc = std::make_unique<WaveScope>();
+        auto* ta = t->adapter.get();
+        sc->fn = [ta] (float p) { return waveByName (ta->text (ta->get()), p); };
+        addChildComponent (*sc);
+        place (M, sc.get(), { 32, 148, 408, 70 });
+        scopes.push_back (std::move (sc));
+        knob (M, P (b + 4, "ctrl A", SpK::Knob1000), 132, 226, 52, 52);
+        knob (M, P (b + 5, "ctrl B", SpK::Knob1000), 184, 226, 52, 52);
+        knob (M, P (b + 1, "octave", SpK::Octave), 236, 226, 52, 52);
+        knob (M, P (b + 2, "note", SpK::Semitone), 288, 226, 52, 52);
+        knob (M, P (b + 3, "fine", SpK::Signed), 340, 226, 52, 52);
+        knob (M, P (b + 8, "wt mix", SpK::Knob1000), 392, 226, 52, 52);
+        knob (M, P (mixIdx[k], "level", SpK::Knob1000), 28, 286, 52, 52);
+        knob (M, P (b + 14, "pan", SpK::Signed), 80, 286, 52, 52);
+        knob (M, P (b + 18, "to flt", SpK::Knob1000), 132, 286, 52, 52);
+        combo (M, P (b + 7, "Wave", SpK::List, waves), 190, 294, 120, "wavetable");
+        separator (M, 32, 350, 408);
+        combo (M, P (b + 11, "Unison", SpK::List, kSpUnison), 32, 368, 64, "unison");
+        knob (M, P (b + 9, "detune", SpK::Knob1000), 100, 358, 52, 52);
+        knob (M, P (b + 13, "density", SpK::Knob1000), 152, 358, 52, 52);
+        knob (M, P (b + 10, "wide", SpK::Knob1000), 204, 358, 52, 52);
+        combo (M, P (b + 12, "Chord", SpK::List, kSpChords), 262, 368, 100, "unison mode");
+        setGroup (og, k, from);
     }
 
-    // ---- Virus -------------------------------------------------------------------------------
+    // LFOS: four rows
+    curLayer = 0;
+    card (M, { 462, 78, 334, 226 }, "LFOS");
+    for (int l = 0; l < 4; ++l)
     {
-        constexpr int M = (int) vc::SynthMode::Virus;
-        auto V = [this] (int o, const char* l = "") -> AP
-        { return VCCloneAudioProcessor::isHostParameter (o) ? virus (o, l) : nullptr; };
-        auto oct = [&] (int o) -> AP { return std::make_unique<OctaveAdapter> (V (o), 64); };
-        addSection (M, "Osc 1", osc1, H (gid::virusOscModel[0], "Model"), nullptr,
-                    list (V (Osc1_Wave_Select, "Wave"), oct (Osc1_Semitone), V (Osc1_Semitone, "Semi"), V (Osc1_Shape, "Shape"), V (Osc1_Pulsewidth),
-                          V (Osc1_Keyfollow, "Key"), V (Osc1_Shape_Velocity), H (gid::virusRetrig[0], "Retrig")));
-        addSection (M, "Osc 2", osc2, H (gid::virusOscModel[1], "Model"), nullptr,
-                    list (V (Osc2_Wave_Select, "Wave"), oct (Osc2_Semitone), H (gid::virusRetrig[1], "Retrig"), V (Osc2_Shape, "Shape"), V (Osc2_Pulsewidth), V (Osc2_Semitone, "Semi"),
-                          V (Osc2_Detune, "Detune"), V (Osc2_FM_Amount), V (Osc_FM_Mode), V (Osc2_Sync, "Sync"), V (Osc2_Filt_Env_Amt),
-                          V (FM_Filt_Env_Amt), V (Osc2_Keyfollow, "Key"), V (Osc2_Shape_Velocity), V (Fm_Amount_Velocity)));
-        addSection (M, "Osc 3", osc3, nullptr, nullptr,
-                    list (V (Osc3_Mode, "Mode"), oct (Osc3_Semitone), V (Osc3_Volume, "Level"), V (Osc3_Semitone, "Semi"), V (Osc3_Detune, "Detune"),
-                          H (gid::virusRetrig[2], "Retrig"),
-                          V (Osc_Balance), V (Osc_Mainvolume), V (Osc_Init_Phase)));
-        addSection (M, "Sub / Noise / Ring", osc4, nullptr, nullptr,
-                    list (V (Suboscillator_Volume), V (Suboscillator_Shape), V (Ringmodulator_Volume), V (Noise_Volume), V (Noise_Color),
-                          V (PulseWidth_Velocity)));
-        const auto f = stack (leftMid, { 1, 1 });
-        addSection (M, "Filter 1", f[0], V (Filter1_Mode, "Mode"), cut (V (Cutoff)),
-                    list (V (Filter1_Resonance, "Res"), V (Filter1_Env_Amt, "Env"), V (Filter1_Keyfollow, "Key"),
-                          V (Filter1_Env_Polarity, "Pol"), V (Filter_Routing, "Routing"), V (Filter_Balance, "Balance")));
-        addSection (M, "Filter 2", f[1], V (Filter2_Mode, "Mode"), cut (V (Cutoff2), "Cutoff 2"),
-                    list (V (Filter2_Resonance, "Res"), V (Filter2_Env_Amt, "Env"), V (Filter2_Keyfollow, "Key"),
-                          V (Filter2_Env_Polarity, "Pol"), V (Filter2_Cutoff_Link, "Link")));
-        const auto b = bottom (4);
-        addSection (M, "LFO 1", b[0], nullptr, nullptr,
-                    list (V (Lfo1_Shape, "Shape"), V (Lfo1_Rate, "Rate"), V (Lfo1_Clock, "Clock"), V (Lfo1_Symmetry, "Symm"),
-                          V (Lfo1_Keytrigger, "Key Trig"), V (Osc1_Lfo1_Amount, "Osc 1"), V (Osc2_Lfo1_Amount, "Osc 2")));
-        addSection (M, "LFO 2", b[1], nullptr, nullptr,
-                    list (V (Lfo2_Shape, "Shape"), V (Lfo2_Rate, "Rate"), V (Lfo2_Clock, "Clock"), V (Lfo2_Symmetry, "Symm"),
-                          V (Lfo2_Keytrigger, "Key Trig"), V (Cutoff1_Lfo2_Amount, "Cut 1"), V (Cutoff2_Lfo2_Amount, "Cut 2")));
-        addSection (M, "LFO 3", b[2], nullptr, nullptr,
-                    list (V (Lfo3_Shape, "Shape"), V (Lfo3_Rate, "Rate"), V (Lfo3_Clock, "Clock"), V (Lfo3_Destination, "Dest"),
-                          V (Osc_Lfo3_Amount, "Amount"), V (Lfo3_Fade_In_Time, "Fade")));
-        addSection (M, "Unison", b[3], nullptr, nullptr,
-                    list (V (Unison_Mode, "Voices"), V (Unison_Detune, "Detune"), V (Unison_Pan_Spread, "Spread"), V (Unison_Lfo_Phase, "LFO Phs"),
-                          V (Punch_Intensity, "Punch")));
-        shared (M, list (V (Patch_Volume, "Patch Vol"), V (Portamento_Time, "Glide"), V (Key_Mode, "Key Mode"), V (Amp_Velocity, "Velocity")));
+        const int b = sp::lfo1_rate + l * 16, y = 108 + l * 48;
+        rowLabel (M, 472, y + 6, 26, String (l + 1), {});
+        combo (M, P (b + 7, "Shape", SpK::List, spLfoForms()), 498, y + 4, 58, "shape", 22);
+        knob (M, P (b, "rate", SpK::Knob1000), 558, y, 44, 44);
+        knob (M, P (b + 11, "amount", SpK::Signed), 602, y, 48, 44);
+        toggle (M, P (b + 3, "Sync", SpK::Flag), 654, y + 4, 42, "sync", "SYNC");
+        combo (M, P (b + 10, "Send To", SpK::List, targets), 702, y + 4, 84, "send to", 22);
+        if (l < 3) separator (M, 472, (float) y + 46, 314);
     }
 
-    // ---- Sylenth -----------------------------------------------------------------------------
+    // ENVELOPES rows 3-4: ENV 1-2 or ENV 3-4 (tabs in the header)
+    const int eg = addTabs (M, { 924, 84, 76, 20 }, { "1-2", "3-4" }, {}, false);
+    for (int e = 0; e < 4; ++e)
     {
-        using namespace vc::sylenth;
-        constexpr int M = (int) vc::SynthMode::Sylenth;
-        auto S = [this] (int i, const char* l) -> AP { return std::make_unique<SylenthAdapter> (processor, i, l); };
-        const Rectangle<float> pos[4] = { osc1, osc2, osc3, osc4 };
-        const char* names[] = { "Osc A1", "Osc A2", "Osc B1", "Osc B2" };
-        for (int k = 0; k < 4; ++k)
-        {
-            const int b = OscBase + k * OscStride;
-            addSection (M, names[k], pos[k], S (b + oWave, "Wave"), nullptr,
-                        list (S (b + oVoices, "Voices"), S (b + oOctave, "Octave"), S (b + oNote, "Note"), S (b + oFine, "Fine"),
-                              S (b + oVolume, "Volume"), S (b + oPhase, "Phase"), S (b + oDetune, "Detune"), S (b + oStereo, "Stereo"),
-                              S (b + oPan, "Pan"), S (b + oInvert, "Inv"), S (b + oRetrig, "Retrig")));
-        }
-        const auto f = stack (leftMid, { 1, 1, 1 });
-        for (int k = 0; k < 2; ++k)
-        {
-            const int b = k == 0 ? FiltA : FiltB;
-            addSection (M, k == 0 ? "Filter A" : "Filter B", f[(size_t) k], S (b, "Type"), cut (S (b + 2, "Cutoff")),
-                        list (S (b + 3, "Res"), S (b + 4, "Drive"), S (b + 1, "Slope"), S (k == 0 ? FiltAInput : FiltBInput, "Input")));
-        }
-        addSection (M, "Filter Control", f[2], nullptr, cut (S (FCtl, "Cutoff")),
-                    list (S (FCtl + 1, "Res"), S (FCtl + 3, "Key"), S (FCtl + 2, "Warm"), S (MixA, "Mix A"), S (MixB, "Mix B")));
-        const auto bt = bottom (4);
-        const int eg = addHeaderGroup (M, { "1", "2" });
-        for (int e = 0; e < 2; ++e)
-        {
-            const int b = e == 0 ? Mod1 : Mod2;
-            addSection (M, "Mod Env", bt[0], nullptr, nullptr,
-                        list (S (b, "A"), S (b + 1, "D"), S (b + 2, "S"), S (b + 3, "R"), S (e == 0 ? Mod1Sync : Mod2Sync, "Sync"),
-                              S (b + 4, "Dest 1"), S (b + 5, "Amt 1"), S (b + 6, "Dest 2"), S (b + 7, "Amt 2")), eg, e);
-        }
-        const int lg = addHeaderGroup (M, { "1", "2" });
-        for (int l = 0; l < 2; ++l)
-        {
-            const int b = l == 0 ? Lfo1 : Lfo2;
-            addSection (M, "LFO", bt[1], nullptr, nullptr,
-                        list (S (b, "Wave"), S (b + 1, "Rate"), S (b + 2, "Sync"), S (l == 0 ? Lfo1Free : Lfo2Free, "Free"), S (b + 3, "Gain"),
-                              S (b + 4, "Offset"), S (b + 5, "Dest 1"), S (b + 6, "Amt 1"), S (b + 7, "Dest 2"), S (b + 8, "Amt 2")), lg, l);
-        }
-        const int mg = addHeaderGroup (M, { "1A", "1B", "2A", "2B" });
-        for (int m = 0; m < 4; ++m)
-        {
-            const int b = Misc + m * 5;
-            addSection (M, "Misc", bt[2], nullptr, nullptr,
-                        list (S (b, "Source"), S (b + 1, "Dest 1"), S (b + 2, "Amt 1"), S (b + 3, "Dest 2"), S (b + 4, "Amt 2")), mg, m);
-        }
-        const int ag = addHeaderGroup (M, { "A", "B" });
-        for (int k = 0; k < 2; ++k)
-        {
-            const int b = k == 0 ? AmpA : AmpB;
-            addSection (M, "Patch Amp Env", bt[3], nullptr, nullptr,
-                        list (S (b, "A"), S (b + 1, "D"), S (b + 2, "S"), S (b + 3, "R"), S (Solo, "Solo")), ag, k);
-        }
-        shared (M, list (S (MainVol, "Main Vol"), S (Polyphony, "Voices"), S (BendRange, "Bend"), S (Porta, "Glide"),
-                         S (PortaMode, "Porta"), S (Mono, "Mono"), S (Legato, "Legato")));
+        const size_t from = items.size();
+        const int b = sp::env1_att + e * 16, y = 206 + (e % 2) * 48;
+        rowLabel (M, 816, y + 8, 52, "ENV " + String (e + 1), e == 0 ? "filter" : "free");
+        const int off[4] = { 0, 1, 2, 5 };
+        for (int i = 0; i < 4; ++i) knob (M, P (b + off[i], i == 0 ? "a" : i == 1 ? "d" : i == 2 ? "s" : "r", SpK::Knob1000), 870 + i * 38, y, 38, 46);
+        knob (M, P (b + 11, "amount", SpK::Signed), 1022, y, 50, 46);
+        combo (M, P (b + 10, "Send To", SpK::List, targets), 1074, y + 6, 96, "send to");
+        setGroup (eg, e / 2, from);
+    }
+    curLayer = -1;
+
+    // FILTER: F1, F2, routing
+    card (M, { 462, 314, 426, 104 }, "FILTER");
+    const int fg = addTabs (M, { 664, 320, 216, 20 }, { "F1", "F2", "ROUTING" }, {}, false);
+    for (int k = 0; k < 2; ++k)
+    {
+        const size_t from = items.size();
+        combo (M, P (k == 0 ? sp::flt1_type : sp::flt2_type, "Type", SpK::List, kSpFltTypes), 474, 358, 104, "type");
+        knob (M, cut (P (k == 0 ? sp::flt1_cut : sp::flt2_cut, "cutoff", SpK::Knob1000), "cutoff"), 584, 346, 62, 64);
+        knob (M, P (k == 0 ? sp::flt1_res : sp::flt2_res, "reso", SpK::Knob1000), 650, 350, 50, 52);
+        combo (M, P (k == 0 ? sp::flt1_mode : sp::flt2_mode, "Mode", SpK::List, kSpFltModes), 706, 358, 84, "mode");
+        setGroup (fg, k, from);
+    }
+    {
+        const size_t from = items.size();
+        toggle (M, P (sp::flt_rout, "Parallel", SpK::Flag), 480, 358, 66, "parallel");
+        toggle (M, P (sp::flt_link, "Link", SpK::Flag), 554, 358, 50, "link");
+        knob (M, P (sp::flt_balance, "balance", SpK::Knob1000), 612, 350, 56, 52);
+        knob (M, P (sp::flt_keytrack, "keytrk", SpK::Signed), 670, 350, 56, 52);
+        setGroup (fg, 2, from);
     }
 
-    // ---- Spire -------------------------------------------------------------------------------
-    {
-        constexpr int M = (int) vc::SynthMode::Spire;
-        auto P = [this] (int i, const char* l, SpK k, StringArray items = {}) -> AP
-        { return std::make_unique<SpireAdapter> (processor, i, l, k, items); };
-        const auto waves = spWaves();
-        const Rectangle<float> pos[4] = { osc1, osc2, osc3, osc4 };
-        const int mixIdx[4] = { sp::mix_osc1, sp::mix_osc2, sp::mix_osc3, sp::mix_osc4 };
-        const int muteIdx[4] = { sp::osc1_mute, sp::osc2_mute, sp::osc3_mute, sp::osc4_mute };
-        for (int k = 0; k < 4; ++k)
-        {
-            const int b = sp::osc1_type + k * 19;
-            addSection (M, "Osc " + String (k + 1), pos[k], P (b, "Type", SpK::List, kSpOscTypes), nullptr,
-                        list (P (b + 7, "Wave", SpK::List, waves), P (b + 1, "Octave", SpK::Octave), P (b + 2, "Note", SpK::Semitone),
-                              P (b + 3, "Fine", SpK::Signed), P (b + 4, "Ctrl A", SpK::Knob1000), P (b + 5, "Ctrl B", SpK::Knob1000),
-                              P (b + 8, "Wt Mix", SpK::Knob1000), P (mixIdx[k], "Level", SpK::Knob1000),
-                              P (b + 11, "Voices", SpK::List, kSpUnison), P (b + 9, "Detune", SpK::Knob1000), P (b + 10, "Width", SpK::Knob1000),
-                              P (b + 13, "Density", SpK::Knob1000), P (b + 12, "Chord", SpK::List, kSpChords), P (b + 14, "Pan", SpK::Signed),
-                              P (b + 18, "To Flt", SpK::Knob1000), P (muteIdx[k], "Mute", SpK::Flag)));
-        }
-        const auto f = stack (leftMid, { 1, 1 });
-        addSection (M, "Filter 1", f[0], P (sp::flt1_type, "Type", SpK::List, kSpFltTypes), cut (P (sp::flt1_cut, "Cutoff", SpK::Knob1000)),
-                    list (P (sp::flt1_res, "Res", SpK::Knob1000), P (sp::flt1_mode, "Mode", SpK::List, kSpFltModes)));
-        addSection (M, "Filter 2", f[1], P (sp::flt2_type, "Type", SpK::List, kSpFltTypes), cut (P (sp::flt2_cut, "Cutoff", SpK::Knob1000)),
-                    list (P (sp::flt2_res, "Res", SpK::Knob1000), P (sp::flt2_mode, "Mode", SpK::List, kSpFltModes)));
-        const auto bt = bottom (4);
-        const auto targets = spTargets();
-        const int eg = addHeaderGroup (M, { "1", "2", "3", "4" });
-        for (int e = 0; e < 4; ++e)
-        {
-            const int b = sp::env1_att + e * 16;
-            addSection (M, "Env", bt[0], nullptr, nullptr,
-                        list (P (b, "A", SpK::Knob1000), P (b + 1, "D", SpK::Knob1000), P (b + 2, "S", SpK::Knob1000), P (b + 5, "R", SpK::Knob1000),
-                              P (b + 10, "Target 1", SpK::List, targets), P (b + 11, "Amt 1", SpK::Signed),
-                              P (b + 13, "Target 2", SpK::List, targets), P (b + 14, "Amt 2", SpK::Signed)), eg, e);
-        }
-        const int lg = addHeaderGroup (M, { "1", "2", "3", "4" });
-        for (int l = 0; l < 4; ++l)
-        {
-            const int b = sp::lfo1_rate + l * 16;
-            addSection (M, "LFO", bt[1], nullptr, nullptr,
-                        list (P (b + 7, "Form", SpK::List, spLfoForms()), P (b, "Rate", SpK::Knob1000), P (b + 3, "Sync", SpK::Flag),
-                              P (b + 2, "Symm", SpK::Signed), P (b + 8, "Amp", SpK::Knob1000), P (b + 10, "Target 1", SpK::List, targets),
-                              P (b + 11, "Amt 1", SpK::Signed), P (b + 13, "Target 2", SpK::List, targets), P (b + 14, "Amt 2", SpK::Signed)), lg, l);
-        }
-        addSection (M, "Filter Routing", bt[2], nullptr, nullptr,
-                    list (P (sp::flt_rout, "Parallel", SpK::Flag), P (sp::flt_link, "Link", SpK::Flag),
-                          P (sp::flt_balance, "Balance", SpK::Knob1000), P (sp::flt_keytrack, "Key", SpK::Signed)));
-        addSection (M, "Character", bt[3], nullptr, nullptr,
-                    list (P (sp::drift, "Drift", SpK::Knob1000), P (sp::velocity, "Velocity", SpK::Knob1000),
-                          P (sp::bend_up, "Bend Up", SpK::List, kSpBend), P (sp::bend_dn, "Bend Dn", SpK::List, kSpBend)));
-        shared (M, list (P (sp::volume, "Spire Vol", SpK::Knob1000), P (sp::mode, "Mode", SpK::List, kSpVoice),
-                         P (sp::poly, "Voices", SpK::List, kSpPoly), P (sp::glide, "Glide", SpK::Knob1000)));
-    }
-
-    // on/off button in every oscillator header (Virus: Osc 1, 2, 3 and Sub/Noise/Ring)
-    const std::pair<const char*, int> oscTitles[] = { { "Osc 1", 0 }, { "Osc 2", 1 }, { "Osc 3", 2 }, { "Osc 4", 3 }, { "Sub / Noise / Ring", 3 },
-                                                      { "Osc A1", 0 }, { "Osc A2", 1 }, { "Osc B1", 2 }, { "Osc B2", 3 } };
-    for (auto& sec : sections)
-        for (auto& [t, k] : oscTitles)
-            if (sec.title == t) sec.power = makeControl (H (gid::oscOn[k], "On"));
-}
-
-void VCClonePanel::layoutSections()
-{
-    for (auto& sec : sections)
-    {
-        const float headerH = sec.headerH;
-        const auto b = sec.bounds;
-        auto body = b.reduced (8.0f, 0.0f).withTrimmedTop (headerH + 6.0f).withTrimmedBottom (6.0f);
-        const bool tabBar = sec.group >= 0 && groups[(size_t) sec.group]->tabBar;
-        // header: selector / group buttons at the right
-        float titleW = CustomLookAndFeel::uiFont (11.0f, true).getStringWidthFloat (sec.title.toUpperCase()) + 24.0f;
-        if (sec.power) titleW += 34.0f;
-        const auto headerArea = Rectangle<float> (b.getX() + titleW, b.getY() + 1.5f, b.getWidth() - titleW - 4.0f, headerH - 3.0f);
-        if (sec.power)
-            sec.power->comp->setBounds (Rectangle<float> (b.getX() + titleW - 6.0f, b.getY() + 2.0f, 34.0f, 14.0f).toNearestInt());
-        if (sec.group >= 0)
-        {
-            auto& g = *groups[(size_t) sec.group];
-            if (tabBar)
-                g.area = Rectangle<float> (b.getX() + 1.0f, b.getY() + 1.0f, b.getWidth() - 2.0f, headerH - 2.0f).toNearestInt();
-            else
-            {
-                const float w = jmin (headerArea.getWidth(), (float) g.labels.size() * 40.0f);
-                g.area = headerArea.withLeft (headerArea.getRight() - w).toNearestInt();
-            }
-        }
-        if (sec.subGroup >= 0)
-        {
-            groups[(size_t) sec.subGroup]->area = body.removeFromTop (20.0f).toNearestInt();
-            body.removeFromTop (6.0f);
-        }
-        // waveform picture: a column at the left of the body (the selector above it when segTop)
-        if (sec.scope)
-        {
-            auto col = body.removeFromLeft (jmin (300.0f, body.getWidth() * 0.4f));
-            body.removeFromLeft (12.0f);
-            if (sec.header && sec.segTop)
-            {
-                sec.header->comp->setBounds (col.removeFromTop (24.0f).toNearestInt());
-                col.removeFromTop (8.0f);
-            }
-            sec.scope->setBounds (col.toNearestInt());
-        }
-        else if (sec.header && sec.segTop)
-        {
-            sec.header->comp->setBounds (body.removeFromTop (22.0f).toNearestInt());
-            body.removeFromTop (6.0f);
-        }
-        if (sec.header && ! sec.segTop)
-        {
-            const int n = jmax (1, sec.header->adapter->items().size());
-            float right = headerArea.getRight();
-            if (sec.group >= 0 && ! tabBar) right = (float) groups[(size_t) sec.group]->area.getX() - 6.0f;
-            const float w = jmin (right - headerArea.getX(), (float) n * 34.0f);
-            sec.header->comp->setBounds (headerArea.withLeft (right - w).withRight (right).toNearestInt());
-        }
-        if (! sec.bottomComps.empty())
-        {
-            auto bottom = body.removeFromBottom (sec.bottomH);
-            body.removeFromBottom (6.0f);
-            const int extra = (int) sec.bottomComps.size() - 1;
-            auto side = extra > 0 ? bottom.removeFromRight (110.0f) : Rectangle<float>();
-            if (extra > 0) bottom.removeFromRight (6.0f);
-            sec.bottomComps[0]->setBounds (bottom.toNearestInt());
-            for (int i = 1; i <= extra; ++i)
-                sec.bottomComps[(size_t) i]->setBounds (side.removeFromTop (side.getHeight() / (float) (extra - i + 1)).reduced (0.0f, 3.0f).toNearestInt());
-        }
-        if (sec.env)
-        {
-            if (body.getWidth() > body.getHeight() * 2.0f)     // wide block: graph left, controls right
-                sec.env->setBounds (body.removeFromLeft (body.getWidth() * 0.55f).toNearestInt()), body.removeFromLeft (4.0f);
-            else
-            {
-                const float rowH = jmin (50.0f, body.getHeight() * 0.36f);
-                sec.env->setBounds (body.removeFromTop (body.getHeight() - rowH - 2.0f).toNearestInt());
-            }
-        }
-        if (sec.hero)
-        {
-            const float side = jmin (body.getHeight(), 120.0f);
-            sec.hero->comp->setBounds (body.removeFromLeft (side).withSizeKeepingCentre (side, side).toNearestInt());
-            body.removeFromLeft (4.0f);
-        }
-        // grid: the largest cell that fits every control (combos take two cells)
-        int cells = 0;
-        for (auto* c : sec.controls) cells += c->kind == Control::Kind::Combo ? 2 : 1;
-        float cell = 64.0f;
-        int cols = 1;
-        for (; cell > 30.0f; cell -= 1.0f)
-        {
-            cols = jmax (1, (int) (body.getWidth() / (cell * 0.95f)));
-            int rows = 1, used = 0;
-            for (auto* c : sec.controls)
-            {
-                const int w = c->kind == Control::Kind::Combo ? 2 : 1;
-                if (used + w > cols) { ++rows; used = 0; }
-                used += w;
-            }
-            if ((float) rows * cell <= body.getHeight()) break;
-        }
-        const float cw = body.getWidth() / (float) cols;
-        int rows = 1, used = 0;
-        for (auto* c : sec.controls)
-        {
-            const int w = c->kind == Control::Kind::Combo ? 2 : 1;
-            if (used + w > cols) { ++rows; used = 0; }
-            used += w;
-        }
-        const float ch = jmin (cell, 72.0f);
-        float y = body.getY() + jmax (0.0f, (body.getHeight() - ch * (float) rows) * 0.5f);
-        used = 0;
-        for (auto* c : sec.controls)
-        {
-            const int w = c->kind == Control::Kind::Combo ? 2 : 1;
-            if (used + w > cols) { used = 0; y += ch; }
-            const auto r = Rectangle<float> (body.getX() + cw * (float) used, y, cw * (float) w, ch);
-            used += w;
-            switch (c->kind)
-            {
-                case Control::Kind::Knob: c->comp->setBounds (r.reduced (1.0f).toNearestInt()); break;
-                case Control::Kind::Toggle: c->comp->setBounds (r.withSizeKeepingCentre (r.getWidth() - 6.0f, jmin (22.0f, r.getHeight() * 0.42f)).toNearestInt()); break;
-                case Control::Kind::Combo:
-                    c->label->setBounds (r.withTrimmedTop (r.getHeight() * 0.12f).withHeight (13.0f).reduced (3.0f, 0.0f).toNearestInt());
-                    c->comp->setBounds (r.withTrimmedTop (r.getHeight() * 0.12f + 14.0f).withHeight (jmin (20.0f, r.getHeight() - 18.0f)).reduced (3.0f, 0.0f).toNearestInt());
-                    break;
-                case Control::Kind::Segment: c->comp->setBounds (r.reduced (2.0f, r.getHeight() * 0.3f).toNearestInt()); break;
-            }
-        }
-        (void) cells;
-    }
+    knob (M, P (sp::volume, "volume", SpK::Knob1000), 904, 350, 54, 52);
+    knob (M, P (sp::velocity, "velocity", SpK::Knob1000), 958, 350, 54, 52);
+    knob (M, P (sp::drift, "drift", SpK::Knob1000), 1012, 350, 54, 52);
+    knob (M, P (sp::glide, "time", SpK::Knob1000), 494, 646, 60, 56);
+    knob (M, P (sp::bend_up, "bend up", SpK::List, kSpBend), 610, 646, 56, 56);
+    knob (M, P (sp::bend_dn, "bend dn", SpK::List, kSpBend), 668, 646, 56, 56);
+    combo (M, P (sp::mode, "Voice Mode", SpK::List, kSpVoice), 846, 656, 62, "mode");
+    knob (M, P (sp::poly, "poly", SpK::List, kSpPoly), 910, 646, 48, 56);
 }
 
 //==============================================================================
-VCClonePanel::VCClonePanel (VCCloneAudioProcessor& p) : processor (p)
+// The modulation matrix (Virus and Spire): one slot at a time, over the LFO and envelope cards
+void VCClonePanel::buildMatrix()
+{
+    curLayer = 1;
+    const Rectangle<float> area { 462, 78, 718, 226 };
+    // Virus: the six assign slots
+    {
+        card (V, area, "MODULATION MATRIX");
+        const char* regions[] = { "assignA", "assignB", "assignC", "assignD", "assignE", "assignF" };
+        const int g = addTabs (V, { 476, 116, 360, 26 }, { "1", "2", "3", "4", "5", "6" }, {}, false);
+        for (int s = 0; s < 6; ++s)
+        {
+            const size_t from = items.size();
+            int x = 476;
+            const int y = 166;
+            for (int o : regionOffsets (regions[s]))
+            {
+                const auto a = virus (o);
+                if (! a->items().isEmpty()) { combo (V, virus (o), x, y + 8, 150, shortVirusLabel (o).toLowerCase()); x += 158; }
+                else { knob (V, virus (o, shortVirusLabel (o).toLowerCase()), x, y, 64, 60); x += 70; }
+            }
+            setGroup (g, s, from);
+        }
+    }
+    // Spire: fifteen slots, two sources and two targets each
+    {
+        card (SPm, area, "MODULATION MATRIX");
+        StringArray names;
+        for (int s = 1; s <= 15; ++s) names.add (String (s));
+        const int g = addTabs (SPm, { 476, 116, 690, 26 }, names, {}, false);
+        using AP = std::unique_ptr<ParamAdapter>;
+        auto P = [this] (int i, const char* l, SpK k, StringArray list = {}) -> AP { return std::make_unique<SpireAdapter> (processor, i, l, k, list); };
+        const auto targets = spTargets(), sources = spSources();
+        for (int s = 0; s < 15; ++s)
+        {
+            const size_t from = items.size();
+            const int b = sp::slot1_Src1 + s * 10, y = 166;
+            combo (SPm, P (b, "Source 1", SpK::List, sources), 476, y + 8, 118, "source 1");
+            combo (SPm, P (b + 1, "Source 2", SpK::List, sources), 600, y + 8, 118, "source 2");
+            combo (SPm, P (b + 3, "Target 1", SpK::List, targets), 730, y + 8, 130, "target 1");
+            knob (SPm, P (b + 2, "amount 1", SpK::Signed), 862, y, 64, 60);
+            combo (SPm, P (b + 5, "Target 2", SpK::List, targets), 934, y + 8, 130, "target 2");
+            knob (SPm, P (b + 4, "amount 2", SpK::Signed), 1066, y, 64, 60);
+            setGroup (g, s, from);
+        }
+    }
+    curLayer = -1;
+}
+
+//==============================================================================
+VCClonePanel::VCClonePanel (VCCloneAudioProcessor& p) : processor (p), browser (p)
 {
     setLookAndFeel (&lnf);
     setOpaque (true);
     setSize (kWidth, kHeight);
     createBackground();
 
-    for (int i = 0; i < 3; ++i)
-    {
-        auto& b = modeButtons[(size_t) i];
-        b.setButtonText (kModeNames[i]);
-        b.setTooltip (String ("Synth mode: ") + kModeNames[i]);
-        b.onClick = [this, i] { processor.setMode ((vc::SynthMode) i); if (currentPage == PageBrowser) showPage (PageSynth); };
-        addAndMakeVisible (b);
-    }
-    browserButton.setTooltip ("Patch browser: the loaded soundset's patches and notes (click again to go back)");
-    browserButton.onClick = [this] { showPage (currentPage == PageBrowser ? (int) PageSynth : (int) PageBrowser); };
-    addAndMakeVisible (browserButton);
-    addAndMakeVisible (soundsetLcd);
-    loadButton.setButtonText ("Import");
-    loadButton.setTooltip ("Import a Virus (.mid/.syx), Sylenth (.fxb/.fxp) or Spire (.spf2) preset or soundbank - it opens in its synth mode. "
-                           "You can also drag files onto the window");
-    loadButton.onClick = [this] { openLoadDialog(); };
-    exportButton.setTooltip ("Save the current preset or soundbank in the format of the synth mode that is loaded");
-    exportButton.onClick = [this] { openExportMenu(); };
+    // top bar
+    modeButton.setTooltip ("Synth mode");
+    modeButton.onClick = [this] { openModeMenu(); };
+    nameButton.setTooltip ("Presets in the loaded bank");
+    nameButton.onClick = [this] { openPresetMenu(); };
     initButton.setTooltip ("Init patch for the current synth mode");
     initButton.onClick = [this] { processor.loadInitPatch(); };
+    prevButton.setTooltip ("Previous preset");
     prevButton.onClick = [this] { processor.setCurrentProgram (processor.getCurrentProgram() - 1); };
+    nextButton.setTooltip ("Next preset");
     nextButton.onClick = [this] { processor.setCurrentProgram (processor.getCurrentProgram() + 1); };
-    presetBox.onChange = [this] { const int i = presetBox.getSelectedId() - 1; if (i >= 0 && i != processor.getCurrentProgram()) processor.setCurrentProgram (i); };
-    for (Component* c : { (Component*) &loadButton, (Component*) &exportButton, (Component*) &initButton })
-        addAndMakeVisible (c);
-    initButton.setButtonText ("INIT");
+    browserButton.setTooltip ("Banks for Virus, Sylenth and Spire (click again to go back)");
+    browserButton.onClick = [this] { showBrowser (! browserShown); };
+    loadButton.setTooltip ("Import a Virus (.mid/.syx), Sylenth (.fxb/.fxp) or Spire (.spf2) preset or bank; it opens in its synth mode. "
+                           "You can also drag files onto the window");
+    loadButton.onClick = [this] { openLoadDialog(); };
+    exportButton.setTooltip ("Save the current preset or bank in the format of the synth mode that is loaded");
+    exportButton.onClick = [this] { openExportMenu(); };
+    for (auto* b : { &modeButton, &nameButton, &initButton, &prevButton, &nextButton, &browserButton, &loadButton, &exportButton })
+        addAndMakeVisible (b);
+    modeButton.setColour (TextButton::buttonColourId, VirusColours::blue);
+    modeButton.setColour (TextButton::textColourOffId, Colour (0xff06121e));
+    nameButton.setAlpha (0.0f);            // clickable; the name is drawn by paint()
+    modeButton.setToggleState (true, dontSendNotification);
+    voiceMeter.active = [this] { return processor.activeVoices.load(); };
+    voiceMeter.maximum = [] { return 16; };
+    addAndMakeVisible (voiceMeter);
+    outputKnob = makeControl (host (gid::volume, "output"), true);
+    outputKnob->comp->setVisible (true);
 
+    buildShared();
     buildVirus();
     buildSylenth();
     buildSpire();
-    buildGlobal();
-    buildSynthPages();
-    fxOn[0] = makeControl (host (gid::delayOn, "Delay On"));
-    fxOn[1] = makeControl (host (gid::reverbOn, "Reverb On"));
-    for (auto* c : fxOn) static_cast<Button*> (c->comp.get())->setButtonText (c == fxOn[0] ? "DELAY ON" : "REVERB ON");
-    prevButton.setTooltip ("Previous preset");
-    nextButton.setTooltip ("Next preset");
-    addAndMakeVisible (prevButton);
-    addAndMakeVisible (nextButton);
-    const char* subNames[] = { "MATRIX", "MORE" };
-    for (int i = 0; i < 2; ++i)
-    {
-        modSubButtons[(size_t) i].setButtonText (subNames[i]);
-        modSubButtons[(size_t) i].onClick = [this, i] { modSub = i; updateVisibility(); repaint(); };
-        addChildComponent (modSubButtons[(size_t) i]);
-    }
+    buildMatrix();
 
-    // Gary's plugins, embedded
-    delayPanel = vendor::createVirusDelayPanel (processor.delayProcessor());
-    reverbPanel = vendor::createLeadVerbPanel (processor.reverbProcessor());
-    stepGrid = processor.stepSequencer().createPanel();
-    for (auto* c : { delayPanel.get(), reverbPanel.get(), stepGrid.get() }) addChildComponent (*c);
+    matrixButton.setTooltip ("Modulation matrix (Virus and Spire)");
+    matrixButton.onClick = [this] { matrixShown = ! matrixShown; updateVisibility(); repaint(); };
+    addChildComponent (matrixButton);
 
-    patchList.setRowHeight (20);
-    patchList.setColour (ListBox::backgroundColourId, Colour (0xff15181b));
-    patchList.setColour (ListBox::outlineColourId, VirusColours::bevelDark);
-    patchList.setOutlineThickness (1);
-    addChildComponent (patchList);
-    infoText.setMultiLine (true);
-    infoText.setReadOnly (true);
-    infoText.setFont (Font (FontOptions (Font::getDefaultMonospacedFontName(), 12.0f, Font::plain)));
-    infoText.setColour (TextEditor::backgroundColourId, Colour (0xff15181b));
-    infoText.setColour (TextEditor::textColourId, Colour (0xffdfe3e6));
-    infoText.setColour (TextEditor::outlineColourId, VirusColours::bevelDark);
-    addChildComponent (infoText);
+    addChildComponent (browser);
 
-    addAndMakeVisible (lcd);
-    addAndMakeVisible (statusLcd);
-    helpButton.onClick = [this] { helpOverlay.setVisible (true); helpOverlay.toFront (false); };
-    addAndMakeVisible (helpButton);
-    addChildComponent (helpOverlay);
-
-    layoutAll();
-    showPage (PageSynth);
+    resized();
+    updateVisibility();
     timerCallback();
     startTimerHz (30);
 }
@@ -894,264 +893,53 @@ VCClonePanel::~VCClonePanel()
 
 int VCClonePanel::currentMode() const { return (int) processor.getMode(); }
 
-bool VCClonePanel::panelVisible (const Panel& p) const
+bool VCClonePanel::itemVisible (const Item& it) const
 {
-    (void) p;
-    return false;   // the one-window layout shows everything in sections
-    if (currentPage != PageSynth || displayTab != TabMod) return false;
-    if (p.page != (modSub == 0 ? PageMatrix : PageMod)) return false;
-    if (p.mode >= 0 && p.mode != currentMode()) return false;
-    if (p.group >= 0 && groups[(size_t) p.group]->selected != p.groupIndex) return false;
+    if (browserShown) return false;
+    if (it.mode >= 0 && it.mode != currentMode()) return false;
+    const int layer = matrixShown && currentMode() != SY ? 1 : 0;
+    if (it.layer >= 0 && it.layer != layer) return false;
+    if (it.group >= 0 && tabGroups[(size_t) it.group]->selected != it.index) return false;
     return true;
-}
-
-//==============================================================================
-void VCClonePanel::layoutAll()
-{
-    // MOD tab of the centre display: the Matrix and More pages, one row of panels per used row.
-    // A selector group (Spire's 15 matrix slots) is a row of buttons above its panels.
-    const auto area = displayArea.reduced (6.0f).withTrimmedTop (24.0f + 22.0f);
-    const float gap = 4.0f;
-    for (int page : { (int) PageMod, (int) PageMatrix })
-        for (int mode = 0; mode < 3; ++mode)
-        {
-            std::vector<int> rows;
-            for (auto& p : panels)
-                if (p.page == page && (p.mode < 0 || p.mode == mode) && std::find (rows.begin(), rows.end(), p.row) == rows.end())
-                    rows.push_back (p.row);
-            std::sort (rows.begin(), rows.end());
-            if (rows.empty()) continue;
-            const float rowH = (area.getHeight() - gap * (float) (rows.size() - 1)) / (float) rows.size();
-            for (size_t ri = 0; ri < rows.size(); ++ri)
-            {
-                const int row = rows[ri];
-                float y = area.getY() + (rowH + gap) * (float) ri, h = rowH;
-                for (auto& g : groups)
-                    if (! g->header && g->page == page && g->row == row && (g->mode < 0 || g->mode == mode))
-                    {
-                        g->area = Rectangle<int> ((int) area.getX(), (int) y, (int) jmin (area.getWidth(), (float) g->labels.size() * 34.0f), 18);
-                        y += 22.0f; h -= 22.0f;
-                    }
-                std::vector<Panel*> inRow;
-                for (auto& p : panels)
-                    if (p.page == page && p.row == row && (p.mode < 0 || p.mode == mode)) inRow.push_back (&p);
-                // group alternatives share one slot
-                std::vector<std::vector<Panel*>> slots;
-                for (auto* p : inRow)
-                {
-                    bool placed = false;
-                    if (p->group >= 0)
-                        for (auto& sl : slots) if (sl.front()->group == p->group) { sl.push_back (p); placed = true; break; }
-                    if (! placed) slots.push_back ({ p });
-                }
-                float totalCells = 0;
-                for (auto& sl : slots) { int m = 0; for (auto* p : sl) m = jmax (m, p->cols); totalCells += (float) m; }
-                const float avail = area.getWidth() - gap * (float) (slots.size() - 1);
-                float x = area.getX();
-                for (auto& sl : slots)
-                {
-                    int m = 0; for (auto* p : sl) m = jmax (m, p->cols);
-                    const float w = avail * (float) m / totalCells;
-                    for (auto* p : sl)
-                    {
-                        p->bounds = { x, y, w, h };
-                        const float cellH = jmin (58.0f, h - 20.0f);
-                        const float cellW = jmin (62.0f, (w - 8.0f) / (float) jmax (1, p->cols));
-                        float cx = x + (w - cellW * (float) p->cols) * 0.5f;
-                        const float cy = y + 18.0f + (h - 18.0f - cellH) * 0.5f;
-                        for (auto* c : p->controls)
-                        {
-                            const auto cell = Rectangle<float> (cx, cy, cellW * (float) c->cells, cellH);
-                            cx += cellW * (float) c->cells;
-                            switch (c->kind)
-                            {
-                                case Control::Kind::Knob: c->comp->setBounds (cell.reduced (1.0f).toNearestInt()); break;
-                                case Control::Kind::Toggle: c->comp->setBounds (cell.withSizeKeepingCentre (cell.getWidth() - 6.0f, 20.0f).toNearestInt()); break;
-                                case Control::Kind::Segment: c->comp->setBounds (cell.reduced (2.0f, cell.getHeight() * 0.3f).toNearestInt()); break;
-                                case Control::Kind::Combo:
-                                    c->label->setBounds (cell.withHeight (13.0f).reduced (3.0f, 0.0f).toNearestInt());
-                                    c->comp->setBounds (cell.withTrimmedTop (14.0f).withHeight (jmin (20.0f, cellH - 14.0f)).reduced (3.0f, 0.0f).toNearestInt());
-                                    break;
-                            }
-                        }
-                    }
-                    x += w + gap;
-                }
-            }
-        }
-    layoutSections();
-    layoutEmbedded();
-}
-
-void VCClonePanel::layoutEmbedded()
-{
-    const auto dSize = vendor::virusDelayPanelSize(), rSize = vendor::leadVerbPanelSize();
-    if (currentPage == PageSynth)
-    {
-        // inside the centre display: one panel at a time, under the display tabs
-        const auto inner = displayArea.reduced (6.0f).withTrimmedTop (24.0f);
-        auto fit = [&] (Component& c, Point<int> size, Rectangle<float>& area)
-        {
-            const float s = jmin (inner.getWidth() / (float) size.x, inner.getHeight() / (float) size.y);
-            area = Rectangle<float> (size.x * s, size.y * s).withCentre (inner.getCentre());
-            c.setBounds (0, 0, size.x, size.y);
-            c.setTransform (AffineTransform::scale (s).translated (area.getX(), area.getY()));
-        };
-        fit (*delayPanel, dSize, delayArea);
-        fit (*reverbPanel, rSize, reverbArea);
-        gridArea = inner.withTrimmedTop (74.0f);
-        const auto tools = inner.withHeight (70.0f).removeFromRight (118.0f);
-        randomiseButton.setBounds (tools.withHeight (28.0f).translated (0.0f, 4.0f).toNearestInt());
-        if (dragHandle) dragHandle->setBounds (tools.withTrimmedTop (38.0f).withHeight (28.0f).toNearestInt());
-        stepGrid->setTransform ({});
-        stepGrid->setBounds (gridArea.reduced (4.0f).toNearestInt());
-        return;
-    }
-    // FX page: the delay and reverb panels side by side under the saturation / FX row
-    const float top = (float) kContentY + kRowH + kRowGap;
-    const float availH = (float) kBottomY - top - 6.0f, availW = (float) kWidth - 16.0f - 6.0f;
-    const float s = jmin (availW / (float) (dSize.x + rSize.x), availH / (float) jmax (dSize.y, rSize.y));
-    delayArea = { 8.0f, top, dSize.x * s, dSize.y * s };
-    reverbArea = { 8.0f + dSize.x * s + 6.0f, top, rSize.x * s, rSize.y * s };
-    delayPanel->setBounds (0, 0, dSize.x, dSize.y);
-    delayPanel->setTransform (AffineTransform::scale (s).translated (delayArea.getX(), delayArea.getY()));
-    reverbPanel->setBounds (0, 0, rSize.x, rSize.y);
-    reverbPanel->setTransform (AffineTransform::scale (s).translated (reverbArea.getX(), reverbArea.getY()));
-
-    // Arp page: the step sequencer grid
-    gridArea = { 8.0f, top, (float) kWidth - 16.0f, jmin (availH, 420.0f) };
-    stepGrid->setTransform ({});
-    stepGrid->setBounds (gridArea.reduced (8.0f, 8.0f).withTrimmedTop (14.0f).toNearestInt());
 }
 
 void VCClonePanel::updateVisibility()
 {
-    for (auto& p : panels)
-    {
-        const bool vis = panelVisible (p);
-        for (auto* c : p.controls) { c->comp->setVisible (vis); if (c->label) c->label->setVisible (vis); }
-    }
-    for (auto& sec : sections)
-    {
-        const bool vis = sectionVisible (sec);
-        for (auto* c : sec.controls) { c->comp->setVisible (vis); if (c->label) c->label->setVisible (vis); }
-        if (sec.header) sec.header->comp->setVisible (vis);
-        if (sec.hero) sec.hero->comp->setVisible (vis);
-        if (sec.env) sec.env->setVisible (vis);
-        if (sec.power) sec.power->comp->setVisible (vis);
-        if (sec.scope) sec.scope->setVisible (vis);
-        for (auto* c : sec.bottomComps) c->setVisible (vis);
-    }
-    for (auto& g : groups)
-    {
-        const bool modeOk = g->mode < 0 || g->mode == currentMode();
-        const bool vis = g->header ? (currentPage == PageSynth && modeOk)
-                                   : (panelVisible (Panel { {}, g->page, g->mode, g->row }) && modeOk);
-        if (g->header)
-        {
-            const int n = g->labels.size(), bw = g->area.getWidth() / jmax (1, n);
-            for (int i = 0; i < n; ++i)
-            {
-                auto& b = *g->buttons[(size_t) i];
-                b.setVisible (vis);
-                auto r = Rectangle<int> (g->area.getX() + i * bw, g->area.getY(), bw - 2, g->area.getHeight());
-                if (g->tabBar && i < (int) g->powers.size() && g->powers[(size_t) i] != nullptr)
-                {
-                    auto* p = g->powers[(size_t) i]->comp.get();
-                    p->setVisible (vis);
-                    p->setBounds (r.getX() + 8, r.getCentreY() - 10, 20, 20);
-                    p->toFront (false);
-                }
-                b.setBounds (r);
-                b.setToggleState (i == g->selected, dontSendNotification);
-            }
-            continue;
-        }
-        // MOD tab groups: one row of buttons
-        const int n = g->labels.size(), bw = g->area.getWidth() / jmax (1, n);
-        for (int i = 0; i < n; ++i)
-        {
-            auto& b = *g->buttons[(size_t) i];
-            b.setVisible (vis);
-            b.setBounds (g->area.getX() + i * bw, g->area.getY(), bw - 2, g->area.getHeight());
-            b.setToggleState (i == g->selected, dontSendNotification);
-        }
-    }
-    // the centre display: MOD only for Virus and Spire
-    const bool synth = currentPage == PageSynth;
-    if (displayTab == TabMod && currentMode() == (int) vc::SynthMode::Sylenth) displayTab = TabArp;
-    layoutEmbedded();
-    delayPanel->setVisible (synth && displayTab == TabDelay);
-    reverbPanel->setVisible (synth && displayTab == TabReverb);
-    stepGrid->setVisible (synth && displayTab == TabArp);
-    randomiseButton.setVisible (synth && displayTab == TabArp);
-    dragHandle->setVisible (synth && displayTab == TabArp);
-    int x = (int) displayArea.getX() + 8;
-    for (int i = 0; i < NumDisplayTabs; ++i)
-    {
-        auto& t = displayTabs[(size_t) i];
-        const bool show = synth && (i != TabMod || currentMode() != (int) vc::SynthMode::Sylenth);
-        t.setVisible (show);
-        t.setToggleState (i == displayTab, dontSendNotification);
-        if (show) { t.setBounds (x, (int) displayArea.getY() + 4, 80, 20); x += 83; }
-    }
-    for (int i = 0; i < 2; ++i)
-    {
-        const bool show = synth && displayTab == (i == 0 ? TabDelay : TabReverb);
-        fxOn[i]->comp->setVisible (show);
-        fxOn[i]->comp->setBounds ((int) displayArea.getRight() - 112, (int) displayArea.getY() + 4, 104, 20);
-    }
-    for (int i = 0; i < 2; ++i)
-    {
-        auto& b = modSubButtons[(size_t) i];
-        bool any = false;
-        for (auto& p : panels) if (p.page == (i == 0 ? PageMatrix : PageMod) && (p.mode < 0 || p.mode == currentMode())) any = true;
-        b.setVisible (synth && displayTab == TabMod && any);
-        b.setToggleState (i == modSub, dontSendNotification);
-        b.setBounds ((int) displayArea.getX() + 10 + i * 86, (int) displayArea.getY() + 30, 82, 18);
-    }
-    patchList.setVisible (currentPage == PageBrowser);
-    infoText.setVisible (currentPage == PageBrowser);
-    browserButton.setToggleState (currentPage == PageBrowser, dontSendNotification);
-    for (int i = 0; i < 3; ++i) modeButtons[(size_t) i].setToggleState (i == currentMode(), dontSendNotification);
+    for (auto& it : items)
+        if (it.comp) it.comp->setVisible (itemVisible (it));
+    for (auto& g : tabGroups)
+        for (int i = 0; i < (int) g->buttons.size(); ++i) g->buttons[(size_t) i]->setToggleState (i == g->selected, dontSendNotification);
+    const bool mat = currentMode() != SY && ! browserShown;
+    matrixButton.setVisible (mat);
+    matrixButton.setButtonText (matrixShown ? String::fromUTF8 ("\xe2\x97\x82 LFO / ENV") : String::fromUTF8 ("MATRIX \xe2\x96\xb8"));
+    matrixButton.setToggleState (! matrixShown, dontSendNotification);
+    if (matrixShown) matrixButton.setBounds (1066, 84, 104, 20);
+    else matrixButton.setBounds (700, 84, 86, 20);
+    browser.setVisible (browserShown);
+    browserButton.setToggleState (browserShown, dontSendNotification);
 }
 
-void VCClonePanel::showPage (int page)
+void VCClonePanel::showBrowser (bool show)
 {
-    // the old pages live in the centre display now
-    switch (page)
-    {
-        case PageMatrix: displayTab = TabMod; modSub = 0; page = PageSynth; break;
-        case PageMod: displayTab = TabMod; modSub = 1; page = PageSynth; break;
-        case PageArp: displayTab = TabArp; page = PageSynth; break;
-        case PageFx: displayTab = TabDelay; page = PageSynth; break;
-        default: break;
-    }
-    currentPage = page;
-    if (page == PageBrowser) infoText.setText (buildInfoText(), false);
+    browserShown = show;
+    if (show) browser.refresh();
     updateVisibility();
     repaint();
 }
 
 void VCClonePanel::resized()
 {
-    // top bar: Browser | soundset name | Import | Export
-    initButton.setBounds (170, 7, 56, 22);
-    browserButton.setBounds (232, 7, 84, 22);
-    lcdTop = Rectangle<int> (324, 5, kWidth - 324 - 196 - 64, 26);
-    prevButton.setBounds (lcdTop.getRight() + 4, 7, 28, 22);
-    nextButton.setBounds (lcdTop.getRight() + 34, 7, 28, 22);
-    loadButton.setBounds (kWidth - 188, 7, 88, 22);
-    exportButton.setBounds (kWidth - 96, 7, 88, 22);
-    // bottom bar: synth mode | LCD | status | help
-    for (int i = 0; i < 3; ++i) modeButtons[(size_t) i].setBounds (8 + i * 74, kBottomY + 6, 70, 20);
-    lcd.setBounds (232, kBottomY + 3, 470, 24);
-    statusLcd.setBounds (708, kBottomY + 3, kWidth - 748, 24);
-    helpButton.setBounds (kWidth - 32, kBottomY + 4, 22, 22);
-    soundsetLcd.setBounds (lcdTop);
-    patchList.setBounds (16, kContentY + 26, 440, kBottomY - kContentY - 36);
-    infoText.setBounds (476, kContentY + 26, kWidth - 492, kBottomY - kContentY - 36);
-    helpOverlay.setBounds (getLocalBounds());
+    modeButton.setBounds (186, 21, 62, 20);
+    nameButton.setBounds (254, 15, 244, 32);
+    initButton.setBounds (504, 21, 40, 20);
+    prevButton.setBounds (552, 21, 22, 20);
+    nextButton.setBounds (576, 21, 22, 20);
+    voiceMeter.setBounds (614, 28, 104, 18);
+    if (outputKnob) outputKnob->comp->setBounds (858, 4, 54, 56);
+    browserButton.setBounds (989, 20, 64, 24);
+    loadButton.setBounds (1063, 20, 54, 24);
+    exportButton.setBounds (1125, 20, 54, 24);
+    browser.setBounds (0, 64, kWidth, kHeight - 64);
 }
 
 //==============================================================================
@@ -1160,29 +948,26 @@ void VCClonePanel::createBackground()
     background = Image (Image::RGB, kWidth * 2, kHeight * 2, true);
     Graphics g (background);
     g.addTransform (AffineTransform::scale (2.0f));
-    g.setGradientFill (ColourGradient (Colour (0xff3b3e42), 0.0f, 0.0f, Colour (0xff1e2023), 0.0f, (float) kHeight, false));
+    g.setGradientFill (ColourGradient (Colour (0xff30353b), kWidth * 0.3f, 0.0f, Colour (0xff1a1c1f), kWidth * 0.3f, (float) kHeight * 0.9f, true));
     g.fillAll();
-    Random rng (0x7a11);
-    for (int y = 0; y < kHeight; ++y)
-    {
-        g.setColour ((rng.nextBool() ? Colours::white : Colours::black).withAlpha (rng.nextFloat() * 0.035f));
-        g.fillRect (0, y, kWidth, 1);
-    }
-    for (int i = 0; i < 2400; ++i)
-    {
-        const int x = rng.nextInt (kWidth), y = rng.nextInt (kHeight), len = 20 + rng.nextInt (140);
-        g.setColour ((rng.nextBool() ? Colours::white : Colours::black).withAlpha (0.015f + rng.nextFloat() * 0.03f));
-        g.fillRect (x, y, len, 1);
-    }
-    g.setGradientFill (ColourGradient (Colours::transparentBlack, kWidth * 0.5f, kHeight * 0.45f, Colours::black.withAlpha (0.35f), 0.0f, 0.0f, true));
-    g.fillAll();
+    // the top bar
+    g.setGradientFill (ColourGradient (Colour (0xff34383d), 0.0f, 0.0f, Colour (0xff23262a), 0.0f, 64.0f, false));
+    g.fillRect (0, 0, kWidth, 64);
+    g.setColour (Colour (0xff0c0d0f));
+    g.drawHorizontalLine (63, 0.0f, (float) kWidth);
+    // the patch display, voices box and the parameter display
+    g.setColour (Colour (0xff15181b));
+    g.fillRoundedRectangle (174.0f, 10.0f, 432.0f, 42.0f, 8.0f);
+    g.fillRoundedRectangle (606.0f + 6.0f, 10.0f, 112.0f, 42.0f, 8.0f);
+    g.setColour (Colour (0xff0b0d0f));
+    g.fillRoundedRectangle (730.0f, 10.0f, 120.0f, 42.0f, 8.0f);
 }
 
 void VCClonePanel::drawWordmark (Graphics& g, Rectangle<float> area)
 {
     const float baseline = area.getBottom() - 8.0f;
     GlyphArrangement main;
-    main.addLineOfText (Font (FontOptions (25.0f, Font::bold | Font::italic)), "vc", area.getX(), baseline);
+    main.addLineOfText (Font (FontOptions (area.getHeight() * 0.62f, Font::bold | Font::italic)), "vc", area.getX(), baseline);
     Path mainPath; main.createPath (mainPath);
     const auto mb = mainPath.getBounds();
     g.setColour (Colours::black.withAlpha (0.6f));
@@ -1192,218 +977,200 @@ void VCClonePanel::drawWordmark (Graphics& g, Rectangle<float> area)
     g.setGradientFill (chrome);
     g.fillPath (mainPath);
     GlyphArrangement second;
-    second.addLineOfText (Font (FontOptions (18.0f, Font::plain)), "clone", mb.getRight() + 5.0f, baseline);
+    second.addLineOfText (Font (FontOptions (area.getHeight() * 0.55f, Font::italic)), "clone", mb.getRight() + 2.0f, baseline);
     Path sp; second.createPath (sp);
     g.setColour (Colours::black.withAlpha (0.5f)); g.fillPath (sp, AffineTransform::translation (1.0f, 1.0f));
     g.setColour (VirusColours::blue); g.fillPath (sp);
-    Path swoosh;
-    const float sx = mb.getX() + 2.0f, sy = baseline + 3.5f, ex = sp.getBounds().getRight();
-    swoosh.startNewSubPath (sx, sy);
-    swoosh.quadraticTo ((sx + ex) * 0.5f, sy + 3.5f, ex + 6.0f, sy - 2.0f);
-    g.setGradientFill (ColourGradient (VirusColours::blue.withAlpha (0.0f), sx, sy, VirusColours::blue, ex, sy, false));
-    g.strokePath (swoosh, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
 }
 
 void VCClonePanel::paint (Graphics& g)
 {
     g.drawImage (background, getLocalBounds().toFloat());
-    auto top = Rectangle<float> (0.0f, 0.0f, (float) kWidth, (float) kTopH);
-    g.setGradientFill (ColourGradient (Colour (0xff4a4e53), 0.0f, 0.0f, Colour (0xff2b2e32), 0.0f, top.getBottom(), false));
-    g.fillRect (top);
-    g.setColour (VirusColours::bevelDark);
-    g.drawHorizontalLine (kTopH - 1, 0.0f, (float) kWidth);
-    drawWordmark (g, { 12.0f, 1.0f, 150.0f, (float) kTopH - 1.0f });
+    drawWordmark (g, { 20.0f, 6.0f, 150.0f, 52.0f });
 
-    if (currentPage == PageSynth)
+    // patch name
+    g.setFont (CustomLookAndFeel::uiFont (17.0f, true));
+    g.setColour (Colour (0xffe8edf2));
+    g.drawFittedText (processor.getPatchName().isEmpty() ? String ("Init") : processor.getPatchName(), nameButton.getBounds().withTrimmedLeft (4),
+                      Justification::centredLeft, 1);
+    // voices / CPU and the parameter display
+    g.setFont (CustomLookAndFeel::uiFont (10.5f, true));
+    g.setColour (Colour (0xffe8edf2));
+    g.drawText ("VOICES " + String (processor.activeVoices.load()) + "/16", 622, 12, 96, 16, Justification::centredLeft);
     {
-        // the centre display: a recessed screen with the tab strip
-        CustomLookAndFeel::drawPanel (g, displayArea, {});
-        CustomLookAndFeel::drawInsetBox (g, displayArea.reduced (4.0f).withTrimmedTop (22.0f), 4.0f);
-
-    }
-    for (auto& p : panels)
-        if (panelVisible (p)) CustomLookAndFeel::drawPanel (g, p.bounds, p.title);
-
-    for (auto& sec : sections)
-        if (sectionVisible (sec))
+        const auto area = Rectangle<int> (736, 12, 108, 38);
+        g.setColour (Colour (0xff7cc4ff));
+        g.setFont (CustomLookAndFeel::uiFont (9.5f, true));
+        const double now = Time::getMillisecondCounterHiRes();
+        if (statusMessage.isNotEmpty() && now < statusUntil) g.drawFittedText (statusMessage, area, Justification::centred, 2);
+        else if (lcdName.isNotEmpty())
         {
-            // a card: rounded, soft gradient; a tab bar draws its strip, other cards a title
-            const auto cb = sec.bounds;
-            g.setColour (Colours::black.withAlpha (0.35f));
-            g.fillRoundedRectangle (cb.translated (0.0f, 2.0f), 11.0f);
-            g.setGradientFill (ColourGradient (Colour (0xff2c3035), 0.0f, cb.getY(), Colour (0xff23262a), 0.0f, cb.getBottom(), false));
-            g.fillRoundedRectangle (cb, 10.0f);
-            g.setColour (Colour (0xff0c0d0f));
-            g.drawRoundedRectangle (cb.reduced (0.5f), 10.0f, 1.0f);
-            if (sec.group >= 0 && groups[(size_t) sec.group]->tabBar)
+            g.drawFittedText (lcdName, area.withHeight (18), Justification::centred, 1);
+            g.setColour (Colours::white);
+            g.setFont (CustomLookAndFeel::uiFont (12.0f, true));
+            g.drawFittedText (lcdValue, area.withTrimmedTop (18), Justification::centred, 1);
+        }
+        else
+        {
+            const auto& bank = processor.getBank();
+            g.drawFittedText (bank.empty() ? String ("INIT") : String (processor.getCurrentProgram() + 1) + " / " + String ((int) bank.size()),
+                              area, Justification::centred, 2);
+        }
+    }
+    if (browserShown) return;
+
+    const int mode = currentMode();
+    const int layer = matrixShown && mode != SY ? 1 : 0;
+    for (auto& c : cards)
+    {
+        if ((c.mode >= 0 && c.mode != mode) || (c.layer >= 0 && c.layer != layer)) continue;
+        const auto cb = c.r;
+        g.setColour (Colours::black.withAlpha (0.35f));
+        g.fillRoundedRectangle (cb.translated (0.0f, 2.0f), 8.0f);
+        g.setGradientFill (ColourGradient (Colour (0xff2c3035), 0.0f, cb.getY(), Colour (0xff23262a), 0.0f, cb.getBottom(), false));
+        g.fillRoundedRectangle (cb, 8.0f);
+        g.setColour (Colour (0xff0c0d0f));
+        g.drawRoundedRectangle (cb.reduced (0.5f), 8.0f, 1.0f);
+        // the title tab, top left
+        const auto font = CustomLookAndFeel::uiFont (13.0f, true);
+        const float pw = c.power ? 22.0f : 0.0f;
+        const float tw = font.getStringWidthFloat (c.title) + 24.0f + pw;
+        Path tab;
+        tab.addRoundedRectangle (cb.getX(), cb.getY(), tw, 30.0f, 8.0f, 8.0f, true, false, false, true);
+        g.setColour (Colour (0xff1a1d20));
+        g.fillPath (tab);
+        g.setFont (font);
+        g.setColour (Colour (0xffe8edf2));
+        g.drawText (c.title, Rectangle<float> (cb.getX() + 10.0f + pw, cb.getY(), tw, 30.0f), Justification::centredLeft);
+    }
+    g.setColour (Colour (0xff1a1d20));
+    for (auto& s : separators)
+        if ((s.mode < 0 || s.mode == mode) && (s.layer < 0 || s.layer == layer)) g.fillRect (s.r);
+
+    for (auto& it : items)
+    {
+        if (! itemVisible (it)) continue;
+        const auto r = it.r.toFloat();
+        if (it.style == 1)
+        {
+            g.setColour (Colour (0xff15181b));
+            g.fillRoundedRectangle (r, 4.0f);
+            g.setColour (Colour (0xff2a3a4a));
+            g.drawRoundedRectangle (r.reduced (0.5f), 4.0f, 1.0f);
+            g.setColour (Colour (0xff9fd2ff));
+            g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
+            g.drawFittedText (it.fixedText, it.r.reduced (8, 0), Justification::centredLeft, 1);
+        }
+        else if (it.style == 3)
+        {
+            g.setColour (kCaption);
+            g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
+            g.drawText (it.fixedText, r, Justification::centredLeft);
+        }
+        else if (it.style == 2)
+        {
+            g.setColour (Colour (0xff7cc4ff));
+            g.setFont (CustomLookAndFeel::uiFont (12.5f, true));
+            if (it.caption.isEmpty())
             {
-                auto strip = cb.withHeight (sec.headerH).reduced (1.0f);
-                Path sp;
-                sp.addRoundedRectangle (strip.getX(), strip.getY(), strip.getWidth(), strip.getHeight(), 9.0f, 9.0f, true, true, false, false);
-                g.setColour (Colour (0xff1a1d20));
-                g.fillPath (sp);
-                g.setColour (Colour (0xff0c0d0f));
-                g.drawHorizontalLine ((int) strip.getBottom(), strip.getX(), strip.getRight());
+                g.setColour (VirusColours::blue);
+                g.fillEllipse (r.getX(), r.getCentreY() - 4.0f, 8.0f, 8.0f);
+                g.setColour (Colour (0xff7cc4ff));
+                g.drawText (it.fixedText, r.withTrimmedLeft (11.0f), Justification::centredLeft);
                 continue;
             }
-            // title at the left of the header, then a blue dot
-            const auto font = CustomLookAndFeel::uiFont (11.0f, true);
-            const auto t = sec.title.toUpperCase();
-            const float tw = font.getStringWidthFloat (t);
-            const auto ta = Rectangle<float> (sec.bounds.getX() + 12.0f, sec.bounds.getY() + 2.0f, tw + 2.0f, sec.headerH);
-            g.setFont (font);
-            g.setColour (Colours::black.withAlpha (0.45f));
-            g.drawText (t, ta.translated (0.0f, 1.0f), Justification::centredLeft);
-            g.setColour (VirusColours::headerText);
-            g.drawText (t, ta, Justification::centredLeft);
-            g.setColour (VirusColours::blue);
-            g.fillEllipse (ta.getRight() + 5.0f, ta.getCentreY() - 3.0f, 6.0f, 6.0f);
+            g.drawText (it.fixedText, r.withHeight (16.0f), Justification::centredLeft);
+            g.setColour (kDim);
+            g.setFont (CustomLookAndFeel::uiFont (9.5f, true));
+            g.drawText (it.caption, r.withTrimmedTop (16.0f), Justification::centredLeft);
+            continue;
         }
-
-    if (currentPage == PageSynth && (displayTab == TabDelay || displayTab == TabReverb))
-        CustomLookAndFeel::drawInsetBox (g, (displayTab == TabReverb ? reverbArea : delayArea).expanded (2.0f), 3.0f);
-    if (currentPage == PageBrowser)
-    {
-        CustomLookAndFeel::drawPanel (g, { 8.0f, (float) kContentY + 2.0f, 456.0f, (float) (kBottomY - kContentY - 6) },
-                                      processor.getBankName().isEmpty() ? String ("Patches") : "Patches - " + processor.getBankName());
-        CustomLookAndFeel::drawPanel (g, { 468.0f, (float) kContentY + 2.0f, (float) kWidth - 476.0f, (float) (kBottomY - kContentY - 6) },
-                                      "Patch Info / Warnings");
+        if (it.caption.isNotEmpty())
+        {
+            g.setColour (kCaption);
+            g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
+            g.drawText (it.caption, Rectangle<float> (r.getX() - 20.0f, r.getBottom() + 3.0f, r.getWidth() + 40.0f, 13.0f), Justification::centred);
+        }
     }
-
-    auto bar = Rectangle<float> (0.0f, (float) kBottomY, (float) kWidth, (float) (kHeight - kBottomY));
-    g.setGradientFill (ColourGradient (Colour (0xff2e3135), 0.0f, bar.getY(), Colour (0xff1b1d20), 0.0f, bar.getBottom(), false));
-    g.fillRect (bar);
-    g.setColour (VirusColours::bevelDark);
-    g.drawHorizontalLine (kBottomY - 1, 0.0f, (float) kWidth);
+    g.setFont (Font (FontOptions (28.0f, Font::bold | Font::italic)));
+    g.setColour (Colour (0xff3a3f45));
+    g.drawText ("vcclone", 990, 640, 190, 50, Justification::centredLeft);
 }
 
 //==============================================================================
 void VCClonePanel::timerCallback()
 {
-    // follow values set elsewhere (patch loads, host automation, MIDI)
-    bool changed = false;
     for (auto& cp : controls)
     {
         auto* c = cp.get();
         if (! c->comp->isVisible()) continue;
+        const int v = c->adapter->get();
+        if (v == c->shown) continue;
+        c->shown = v;
+        switch (c->kind)
         {
-            const int v = c->adapter->get();
-            if (v == c->shown) continue;
-            c->shown = v;
-            changed = true;
-            switch (c->kind)
+            case Control::Kind::Knob: static_cast<VirusKnob*> (c->comp.get())->setValue (v, dontSendNotification); c->comp->repaint(); break;
+            case Control::Kind::Combo: static_cast<ComboBox*> (c->comp.get())->setSelectedId (v - c->adapter->minimum() + 1, dontSendNotification); break;
+            case Control::Kind::Toggle:
             {
-                case Control::Kind::Knob: static_cast<VirusKnob*> (c->comp.get())->setValue (v, dontSendNotification); c->comp->repaint(); break;
-                case Control::Kind::Combo: static_cast<ComboBox*> (c->comp.get())->setSelectedId (v - c->adapter->minimum() + 1, dontSendNotification); break;
-                case Control::Kind::Toggle: static_cast<Button*> (c->comp.get())->setToggleState (v != 0, dontSendNotification); break;
-                case Control::Kind::Segment: static_cast<SegmentSelector*> (c->comp.get())->setShown (v); break;
+                auto* b = static_cast<Button*> (c->comp.get());
+                b->setToggleState (v != 0, dontSendNotification);
+                const auto on = b->getProperties()["onText"].toString();
+                if (on.isNotEmpty()) b->setButtonText (on == "ON" ? String (v != 0 ? "ON" : "OFF") : on);
+                break;
             }
         }
     }
-
-    if (changed)
-        for (auto& gr : envGraphs) if (gr->isVisible()) gr->repaint();
+    for (auto& s : scopes) if (s->isVisible()) s->repaint();
 
     const int mode = currentMode();
-    const int arpMode = roundToInt (processor.apvts.getRawParameterValue (gid::arpMode)->load());
-    if (mode != lastMode || arpMode != lastArpMode)
+    if (mode != lastMode)
     {
         lastMode = mode;
-        lastArpMode = arpMode;
+        modeButton.setButtonText (String (kModeNames[mode]) + String::fromUTF8 (" \xe2\x96\xbe"));
         for (auto& c : controls) c->shown = INT_MIN;
         updateVisibility();
         repaint();
     }
-
-    {
-        const String bank = processor.getBankName();
-        soundsetLcd.setContent (bank.isEmpty() ? String ("INIT SOUNDSET") : bank.toUpperCase(),
-                                processor.getPatchName().toUpperCase() + "   " + kModeNames[currentMode()]);
-    }
-    if (lcdName.isNotEmpty()) lcd.setContent (lcdName, lcdValue);
-    else lcd.setContent (processor.getPatchName().toUpperCase(), kModeNames[mode]);
-
-    const double now = Time::getMillisecondCounterHiRes();
-    if (statusMessage.isNotEmpty() && now < statusUntil) statusLcd.setContent (statusMessage, {});
-    else statusLcd.setContent (String (kModeNames[mode]) + "   VOICES " + String (processor.activeVoices.load()),
-                               processor.getBank().empty() ? String ("INIT") : String (processor.getCurrentProgram() + 1) + "/" + String ((int) processor.getBank().size()));
+    nameButton.setButtonText (processor.getPatchName().isEmpty() ? String ("Init") : processor.getPatchName());
+    voiceMeter.repaint();
+    repaint (174, 8, 680, 48);
 
     if (lastBankVersion != processor.bankVersion.load())
     {
         lastBankVersion = processor.bankVersion.load();
-        refreshPresetList();
+        const bool many = processor.getBank().size() > 1;
+        prevButton.setEnabled (many);
+        nextButton.setEnabled (many);
         lcdName.clear();
         for (auto& c : controls) c->shown = INT_MIN;
-        if (currentPage == PageBrowser) infoText.setText (buildInfoText(), false);
+        browser.refresh();
         repaint();
     }
 }
 
-void VCClonePanel::refreshPresetList()
+void VCClonePanel::openModeMenu()
 {
-    presetBox.clear (dontSendNotification);
+    PopupMenu m;
+    for (int i = 0; i < 3; ++i) m.addItem (i + 1, kModeNames[i], true, i == currentMode());
+    m.showMenuAsync (PopupMenu::Options().withTargetComponent (modeButton), [this] (int r)
+    {
+        if (r > 0) processor.setMode ((vc::SynthMode) (r - 1));
+    });
+}
+
+void VCClonePanel::openPresetMenu()
+{
     const auto& bank = processor.getBank();
-    static const char* typeTag[] = { "V", "Sy", "Sp" };
+    if (bank.empty()) { showBrowser (true); return; }
+    PopupMenu m;
     for (int i = 0; i < (int) bank.size(); ++i)
-        presetBox.addItem (String (i + 1).paddedLeft ('0', 3) + "  " + String (bank[(size_t) i].name) + "  [" + typeTag[(int) bank[(size_t) i].type] + "]", i + 1);
-    if (bank.empty()) { presetBox.addItem ("---  " + processor.getPatchName(), 1); presetBox.setSelectedId (1, dontSendNotification); }
-    else presetBox.setSelectedId (processor.getCurrentProgram() + 1, dontSendNotification);
-    prevButton.setEnabled (bank.size() > 1);
-    nextButton.setEnabled (bank.size() > 1);
-    patchList.updateContent();
-    patchList.selectRow (processor.getCurrentProgram(), true, true);
-    patchList.repaint();
-}
-
-String VCClonePanel::buildInfoText() const
-{
-    String s;
-    s << "Patch: " << processor.getPatchName() << "\n";
-    s << "Synth mode: " << kModeNames[currentMode()] << "\n";
-    if (processor.getBankFormat().isNotEmpty()) s << "File: " << processor.getBankName() << " (" << processor.getBankFormat() << ")\n";
-    s << "\n";
-    for (auto& n : processor.getPatchNotes()) s << "NOTE: " << n << "\n\n";
-    if (currentMode() == 0)
+        m.addItem (i + 1, String (i + 1).paddedLeft ('0', 3) + "  " + String (bank[(size_t) i].name), true, i == processor.getCurrentProgram());
+    m.showMenuAsync (PopupMenu::Options().withTargetComponent (nameButton).withMaximumNumColumns (4), [this] (int r)
     {
-        const auto patch = processor.currentPatch();
-        const auto ignored = vc::ignoredParametersInUse (patch);
-        s << "IGNORED VIRUS PARAMETERS:\n";
-        if (ignored.empty()) s << "  none\n";
-        for (int o : ignored) s << "  " << String (L::kParams[o].name).trim() << "\n";
-        s << "  (the Virus's own effects and arpeggiator are replaced by the global FX and arp sections)\n\n";
-    }
-    s << "IMPORT WARNINGS (" << (int) processor.getWarnings().size() << "):\n";
-    int shown = 0;
-    for (auto& w : processor.getWarnings())
-    {
-        if (++shown > 150) { s << "  ...\n"; break; }
-        s << "  " << (w.patchIndex >= 0 ? "[" + String (w.patchIndex + 1).paddedLeft ('0', 3) + "] " : String()) << String (w.message) << "\n";
-    }
-    s << "\nVIRUS ENGINE TABLES:\n";
-    for (auto& t : vc::tables::tableStatus())
-        s << "  " << String (t.name).paddedRight (' ', 18) << (t.status == vc::tables::Status::Measured ? "measured" : "GUESSED") << "\n";
-    return s;
+        if (r > 0) processor.setCurrentProgram (r - 1);
+    });
 }
-
-int VCClonePanel::getNumRows() { return (int) processor.getBank().size(); }
-
-void VCClonePanel::paintListBoxItem (int row, Graphics& g, int width, int height, bool selected)
-{
-    const auto& bank = processor.getBank();
-    if (row < 0 || row >= (int) bank.size()) return;
-    if (selected) { g.setColour (Colour (0xff2a6fb8)); g.fillRect (0, 0, width, height); }
-    const auto& p = bank[(size_t) row];
-    static const char* typeName[] = { "Virus", "Sylenth", "Spire" };
-    g.setFont (CustomLookAndFeel::uiFont (12.5f, selected));
-    g.setColour (selected ? Colours::white : Colour (0xffdfe3e6));
-    g.drawText (String (row + 1).paddedLeft ('0', 3), 6, 0, 34, height, Justification::centredLeft);
-    g.drawText (String (p.name), 44, 0, 190, height, Justification::centredLeft);
-    g.setColour (selected ? Colours::white : VirusColours::labelText);
-    g.drawText (typeName[(int) p.type], 240, 0, 70, height, Justification::centredLeft);
-    g.drawText (String (p.type == vc::PatchType::Virus ? vc::valueToText (Category1, p.virus.value (Category1)) : p.category), 314, 0, 110, height, Justification::centredLeft);
-}
-
-void VCClonePanel::listBoxItemClicked (int row, const MouseEvent&) { processor.setCurrentProgram (row); }
 
 bool VCClonePanel::isInterestedInFileDrag (const StringArray& files)
 {
@@ -1421,8 +1188,10 @@ void VCClonePanel::filesDropped (const StringArray& files, int, int)
 void VCClonePanel::loadFile (const File& f)
 {
     const auto err = processor.loadBankFile (f);
-    if (err.isNotEmpty()) AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon, "Could not load " + f.getFileName(), err);
-    else { statusMessage = "LOADED " + String ((int) processor.getBank().size()) + " PATCHES"; statusUntil = Time::getMillisecondCounterHiRes() + 2500; }
+    if (err.isNotEmpty()) { AlertWindow::showMessageBoxAsync (MessageBoxIconType::WarningIcon, "Could not load " + f.getFileName(), err); return; }
+    browser.addBank (f);
+    statusMessage = "LOADED " + String ((int) processor.getBank().size()) + " PATCHES";
+    statusUntil = Time::getMillisecondCounterHiRes() + 2500;
 }
 
 void VCClonePanel::openLoadDialog()
@@ -1436,26 +1205,26 @@ void VCClonePanel::openExportMenu()
 {
     // offers only the formats of the synth mode that is loaded
     PopupMenu m;
-    struct Item { String label, ext; bool bank; };
-    std::vector<Item> items;
+    struct Entry { String label, ext; bool bank; };
+    std::vector<Entry> entries;
     switch (processor.getMode())
     {
         case vc::SynthMode::Sylenth:
-            items = { { "Save Sylenth preset (.fxp)", ".fxp", false }, { "Save Sylenth soundbank (.fxb)", ".fxb", true } };
+            entries = { { "Save Sylenth preset (.fxp)", ".fxp", false }, { "Save Sylenth soundbank (.fxb)", ".fxb", true } };
             break;
         case vc::SynthMode::Spire:
-            items = { { "Save Spire preset (.spf2)", ".spf2", false } };
+            entries = { { "Save Spire preset (.spf2)", ".spf2", false } };
             break;
         default:
-            items = { { "Save Virus preset (.syx)", ".syx", false }, { "Save Virus preset (.mid)", ".mid", false },
-                      { "Save Virus soundbank (.syx)", ".syx", true }, { "Save Virus soundbank (.mid)", ".mid", true } };
+            entries = { { "Save Virus preset (.syx)", ".syx", false }, { "Save Virus preset (.mid)", ".mid", false },
+                        { "Save Virus soundbank (.syx)", ".syx", true }, { "Save Virus soundbank (.mid)", ".mid", true } };
             break;
     }
-    for (size_t i = 0; i < items.size(); ++i) m.addItem ((int) i + 1, items[i].label);
-    m.showMenuAsync (PopupMenu::Options().withTargetComponent (exportButton), [this, items] (int r)
+    for (size_t i = 0; i < entries.size(); ++i) m.addItem ((int) i + 1, entries[i].label);
+    m.showMenuAsync (PopupMenu::Options().withTargetComponent (exportButton), [this, entries] (int r)
     {
         if (r <= 0) return;
-        const auto it = items[(size_t) r - 1];
+        const auto it = entries[(size_t) r - 1];
         const String base = File::createLegalFileName (processor.getPatchName().isEmpty() ? String ("VC-Clone") : processor.getPatchName());
         chooser = std::make_unique<FileChooser> ("Export", File::getSpecialLocation (File::userDocumentsDirectory).getChildFile (base + it.ext), "*" + it.ext);
         chooser->launchAsync (FileBrowserComponent::saveMode | FileBrowserComponent::warnAboutOverwriting, [this, it] (const FileChooser& fc)
