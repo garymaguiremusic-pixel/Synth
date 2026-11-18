@@ -4,11 +4,11 @@
 #include "PluginProcessor.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
-static juce::TextButton* findButton (juce::Component* root, const juce::String& text)
+static juce::Button* findButton (juce::Component* root, const juce::String& text)
 {
     for (auto* c : root->getChildren())
-        if (auto* b = dynamic_cast<juce::TextButton*> (c))
-            if (b->getButtonText() == text || (text == "MATRIX" && b->getButtonText().startsWith ("MATRIX") && b->isVisible())) return b;
+        if (auto* b = dynamic_cast<juce::Button*> (c))
+            if (b->getButtonText() == text && b->isVisible()) return b;
     return nullptr;
 }
 
@@ -55,8 +55,8 @@ int main (int argc, char** argv)
             std::printf ("wrote %s\n", f.getFullPathName().toRawUTF8());
             if (page != "MAIN")      // back to the main view
                 for (auto* b : panel->getChildren())
-                    if (auto* tb = dynamic_cast<juce::TextButton*> (b); tb && tb->isVisible() && tb->onClick
-                        && (tb->getButtonText().contains ("LFO / ENV") || (page == "Browser" && tb->getButtonText() == "Browser")))
+                    if (auto* tb = dynamic_cast<juce::Button*> (b); tb && tb->isVisible() && tb->onClick
+                        && ((page == "MATRIX" && tb->getButtonText() == "SEQ") || (page == "Browser" && tb->getButtonText() == "Browser")))
                     { tb->onClick(); pump (100); break; }
         }
     }

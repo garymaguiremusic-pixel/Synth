@@ -3,6 +3,7 @@
 #include "PluginEditor.h"
 #include "VirusCLayout.h"
 #include "Tables/Tables.h"
+#include <cstring>
 
 using namespace juce;
 using namespace vc::layout::off;
@@ -36,7 +37,7 @@ namespace
     {
         if (sync) return vc::SyncDivisions::name (roundToInt (v / 127.0 * (vc::SyncDivisions::kCount - 1)));
         const double ms = VCCloneAudioProcessor::envKnobToMs (v);
-        return ms < 1000.0 ? String (ms, ms < 10 ? 1 : 0) + " ms" : String (ms / 1000.0, 2) + " s";
+        return ms < 10.0 ? String (ms, 1) + " ms" : ms < 1000.0 ? String (roundToInt (ms)) + " ms" : String (ms / 1000.0, 2) + " s";
     }
     int syncIndex (float v) { return roundToInt (v / 127.0f * (vc::SyncDivisions::kCount - 1)); }
 }
@@ -96,6 +97,22 @@ AudioProcessorValueTreeState::ParameterLayout VCCloneAudioProcessor::createLayou
     for (int o = 0; o < 2; ++o)
         choiceP (gid::virusOscModel[o], ("Virus Osc " + String (o + 1) + " Model").toRawUTF8(),
                  { "Classic", "HyperSaw", "Wavetable", "Wave PWM", "Grain Simple", "Grain Complex", "Formant Simple", "Formant Complex" }, 0);
+
+    // output EQ (after the delay and reverb)
+    boolP (gid::eqOn, "EQ On", false);
+    {
+        auto fText = [] (int v) { const double f = VCCloneAudioProcessor::eqFreqHz (v); return f < 1000.0 ? String (roundToInt (f)) + " Hz" : String (f / 1000.0, f < 10000.0 ? 1 : 0) + " kHz"; };
+        auto qText = [] (int v) { return String (VCCloneAudioProcessor::eqQValue (v), 2); };
+        auto gText = [] (int v) { return (v > 0 ? "+" : "") + String (v / 10.0, 1) + " dB"; };
+        const char* names[3] = { "EQ Low", "EQ Mid", "EQ High" };
+        const int fDef[3] = { 34, 64, 101 };    // ~100 Hz, ~1.1 kHz, ~8 kHz
+        for (int b = 0; b < 3; ++b)
+        {
+            intP (gid::eqFreq[b], (String (names[b]) + " Freq").toRawUTF8(), 0, 127, fDef[b], fText);
+            intP (gid::eqQ[b], (String (names[b]) + " Q").toRawUTF8(), 0, 100, 35, qText);
+            intP (gid::eqGain[b], (String (names[b]) + " Gain").toRawUTF8(), -180, 180, 0, gText);
+        }
+    }
 
     // Virus patch bytes
     const auto init = vc::makeInitPatch();
@@ -171,6 +188,48 @@ void VCCloneAudioProcessor::prepareToPlay (double sr, int block)
     }
     scratch.setSize (2, block);
     lastLatency = -1;
+    eq.valid = false;
+    for (auto& band : eq.f) for (auto& fl : band) { fl.coefficients = new dsp::IIR::Coefficients<float> (1, 0, 0, 1, 0, 0); fl.reset(); }
+}
+
+void VCCloneAudioProcessor::processEq (AudioBuffer<float>& buffer)
+{
+    // low shelf, mid bell, high shelf; coefficients only change when a value moves
+    float v[9];
+    for (int b = 0; b < 3; ++b)
+    {
+        v[b * 3] = apvts.getRawParameterValue (gid::eqFreq[b])->load();
+        v[b * 3 + 1] = apvts.getRawParameterValue (gid::eqQ[b])->load();
+        v[b * 3 + 2] = apvts.getRawParameterValue (gid::eqGain[b])->load();
+    }
+    if (! eq.valid || std::memcmp (v, eq.last, sizeof (v)) != 0)
+    {
+        const double sr = sampleRate > 0 ? sampleRate : 44100.0;
+        for (int b = 0; b < 3; ++b)
+        {
+            const double f = jlimit (20.0, sr * 0.45, eqFreqHz (roundToInt (v[b * 3])));
+            const double q = eqQValue (roundToInt (v[b * 3 + 1]));
+            const float gain = Decibels::decibelsToGain ((float) (v[b * 3 + 2] / 10.0f));
+            auto c = b == 0 ? dsp::IIR::Coefficients<float>::makeLowShelf (sr, (float) f, (float) q, gain)
+                   : b == 1 ? dsp::IIR::Coefficients<float>::makePeakFilter (sr, (float) f, (float) q, gain)
+                            : dsp::IIR::Coefficients<float>::makeHighShelf (sr, (float) f, (float) q, gain);
+            for (auto& fl : eq.f[b]) *fl.coefficients = *c;
+        }
+        if (! eq.valid) for (auto& band : eq.f) for (auto& fl : band) fl.reset();
+        std::memcpy (eq.last, v, sizeof (v));
+        eq.valid = true;
+    }
+    const int n = buffer.getNumSamples();
+    for (int ch = 0; ch < jmin (2, buffer.getNumChannels()); ++ch)
+    {
+        auto* d = buffer.getWritePointer (ch);
+        for (int b = 0; b < 3; ++b)
+        {
+            if (std::abs (v[b * 3 + 2]) < 0.5f) continue;     // 0 dB band: skip
+            auto& fl = eq.f[b][ch];
+            for (int i = 0; i < n; ++i) d[i] = fl.processSample (d[i]);
+        }
+    }
 }
 
 void VCCloneAudioProcessor::reset()
@@ -403,6 +462,7 @@ void VCCloneAudioProcessor::processBlock (AudioBuffer<float>& buffer, MidiBuffer
             reverb->processBlock (buffer, emptyMidi);
         }
     }
+    if (apvts.getRawParameterValue (gid::eqOn)->load() > 0.5f) processEq (buffer);
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch) buffer.clear (ch, 0, numSamples);
 
     activeVoices = inst.activeVoiceCount();

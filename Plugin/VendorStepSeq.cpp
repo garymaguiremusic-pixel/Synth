@@ -14,6 +14,7 @@
 #include "../ThirdParty/ArpSampler/Arp/ArpEngine.h"
 #include "../ThirdParty/ArpSampler/Arp/PatternModel.h"
 #include "../ThirdParty/ArpSampler/UI/StepGrid.h"
+#include "../ThirdParty/ArpSampler/Arp/Scales.h"
 #include "VendorArp.h"
 
 namespace vendor
@@ -255,5 +256,158 @@ std::unique_ptr<juce::Component> StepSequencer::createPanel()
 {
     return std::make_unique<StepGrid> (impl->model, *impl->apvts.getParameter (as::ParamIDs::seqLength),
                                        *impl->apvts.getParameter (as::ParamIDs::seqEnd));
+}
+
+void StepSequencer::syncScaleUnits()
+{
+    auto& d = *impl;
+    const bool lock = d.raw (as::ParamIDs::scaleLock) > 0.5f;
+    const int key = juce::roundToInt (d.raw (as::ParamIDs::scaleKey)), scale = juce::roundToInt (d.raw (as::ParamIDs::scale));
+    auto pat = d.model.get();
+    if (pat.scaleSteps == lock && (! lock || (pat.key == key && pat.scale == scale))) return;
+    for (auto& st : pat.steps)
+    {
+        if (lock && ! pat.scaleSteps)      st.transpose = juce::jlimit (-24, 24, as::arp::semitonesToScaleSteps (st.transpose, scale));
+        else if (! lock && pat.scaleSteps) st.transpose = juce::jlimit (-24, 24, as::arp::scaleStepsToSemitones (st.transpose, pat.scale));
+    }
+    pat.scaleSteps = lock;
+    pat.key = key;
+    pat.scale = scale;
+    d.model.set (pat, false);
+}
+
+namespace
+{
+    /** One cell per step: the transpose in semitones and a bar for its height. */
+    class NoteGrid : public juce::Component, private juce::Timer, private juce::ChangeListener
+    {
+    public:
+        NoteGrid (as::arp::PatternModel& m, juce::AudioProcessorValueTreeState& s, std::function<int()> current)
+            : model (m), state (s), currentStep (std::move (current))
+        {
+            model.addChangeListener (this);
+            startTimerHz (20);
+        }
+        ~NoteGrid() override { model.removeChangeListener (this); }
+
+        void paint (juce::Graphics& g) override
+        {
+            using namespace juce;
+            auto b = getLocalBounds().toFloat();
+            g.setGradientFill (ColourGradient (Colour (0xff07090b), 0.0f, 0.0f, Colour (0xff0d1013), 0.0f, b.getBottom(), false));
+            g.fillRoundedRectangle (b, 6.0f);
+            g.setColour (Colour (0xff050607));
+            g.drawRoundedRectangle (b.reduced (0.5f), 6.0f, 1.0f);
+            const auto pat = model.get();
+            const int n = numSteps(), cur = currentStep ? currentStep() : -1;
+            const int scale = juce::roundToInt (raw (as::ParamIDs::scale));
+            for (int i = 0; i < n; ++i)
+            {
+                const auto r = cell (i);
+                const auto& st = pat.steps[(size_t) i];
+                const int semis = pat.scaleSteps ? as::arp::scaleStepsToSemitones (st.transpose, scale) : st.transpose;
+                const bool rest = st.isRest();
+                g.setColour (Colour (0xff15181b));
+                g.fillRoundedRectangle (r, 3.0f);
+                g.setColour (i == cur ? Colour (0xff3fa9ff) : (i == hot ? Colour (0xff3a5a7a) : Colour (0xff0c0d0f)));
+                g.drawRoundedRectangle (r.reduced (0.5f), 3.0f, 1.0f);
+                // bar: 0 near the bottom, +24 at the top, negatives shorter
+                const float frac = jlimit (0.04f, 1.0f, 0.18f + (float) semis / 24.0f * 0.5f);
+                auto bar = r.reduced (3.0f).withTrimmedTop (r.getHeight() * 0.38f);
+                bar = bar.withTop (bar.getBottom() - bar.getHeight() * frac);
+                if (! rest)
+                {
+                    g.setColour (Colour (0xff1f7fe0).withAlpha (0.35f));
+                    g.fillRoundedRectangle (bar.expanded (1.5f), 3.0f);
+                    g.setColour (Colour (0xff3fa9ff));
+                }
+                else g.setColour (Colour (0xff2a3036));
+                g.fillRoundedRectangle (bar, 2.0f);
+                g.setFont (FontOptions (jmin (11.0f, r.getWidth() * 0.42f), Font::bold));
+                g.setColour (rest ? Colour (0xff5d666e) : Colour (0xffeaf5ff));
+                g.drawText (semis > 0 ? "+" + String (semis) : String (semis), r.withHeight (r.getHeight() * 0.36f).translated (0.0f, 2.0f),
+                            Justification::centred, false);
+            }
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            drag = stepAt (e.position);
+            if (drag < 0) return;
+            model.pushUndoPoint();
+            startT = model.get().steps[(size_t) drag].transpose;
+            startY = e.position.y;
+        }
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (drag < 0) return;
+            const float px = e.mods.isShiftDown() ? 24.0f : 8.0f;      // pixels per step
+            setTranspose (drag, startT + juce::roundToInt ((startY - e.position.y) / px), false);
+        }
+        void mouseUp (const juce::MouseEvent&) override { drag = -1; }
+        void mouseMove (const juce::MouseEvent& e) override { const int h = stepAt (e.position); if (h != hot) { hot = h; repaint(); } }
+        void mouseExit (const juce::MouseEvent&) override { hot = -1; repaint(); }
+        void mouseDoubleClick (const juce::MouseEvent& e) override
+        {
+            const int i = stepAt (e.position);
+            if (i < 0) return;
+            auto pat = model.get();
+            auto& st = pat.steps[(size_t) i];
+            st.volume = st.isRest() ? 127 : 0;
+            if (st.velocity <= 0) st.velocity = 100;
+            model.set (pat, true);
+        }
+        void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w) override
+        {
+            const int i = stepAt (e.position);
+            if (i < 0 || std::abs (w.deltaY) < 1.0e-6f) return;
+            setTranspose (i, model.get().steps[(size_t) i].transpose + (w.deltaY > 0 ? 1 : -1), true);
+        }
+
+    private:
+        float raw (const char* id) const { return state.getRawParameterValue (id)->load(); }
+        int numSteps() const
+        {
+            const int length = juce::roundToInt (raw (as::ParamIDs::seqLength)) == 0 ? 16 : 32;
+            return as::arp::effectiveLength (length, juce::roundToInt (raw (as::ParamIDs::seqEnd)));
+        }
+        juce::Rectangle<float> cell (int i) const
+        {
+            const auto b = getLocalBounds().toFloat().reduced (4.0f);
+            const int n = juce::jmax (1, numSteps());
+            const float w = (b.getWidth() - 3.0f * (float) (n - 1)) / (float) n;
+            return { b.getX() + (float) i * (w + 3.0f), b.getY(), w, b.getHeight() };
+        }
+        int stepAt (juce::Point<float> p) const
+        {
+            for (int i = 0; i < numSteps(); ++i) if (cell (i).expanded (1.5f, 0.0f).contains (p)) return i;
+            return -1;
+        }
+        void setTranspose (int i, int t, bool undoable)
+        {
+            auto pat = model.get();
+            t = juce::jlimit (-24, 24, t);
+            if (pat.steps[(size_t) i].transpose == t) return;
+            pat.steps[(size_t) i].transpose = t;
+            model.set (pat, undoable);
+        }
+        void timerCallback() override
+        {
+            const int cur = currentStep ? currentStep() : -1;
+            if (cur != lastCur) { lastCur = cur; repaint(); }
+        }
+        void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
+
+        as::arp::PatternModel& model;
+        juce::AudioProcessorValueTreeState& state;
+        std::function<int()> currentStep;
+        int drag = -1, startT = 0, hot = -1, lastCur = -2;
+        float startY = 0.0f;
+    };
+}
+
+std::unique_ptr<juce::Component> StepSequencer::createNoteGrid()
+{
+    return std::make_unique<NoteGrid> (impl->model, impl->apvts, [this] { return getCurrentStep(); });
 }
 } // namespace vendor

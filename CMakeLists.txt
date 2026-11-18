@@ -157,6 +157,8 @@ if(VCCLONE_BUILD_PLUGIN)
         Plugin/UI/ParamAdapters.cpp
         Plugin/UI/SynthWidgets.cpp
         Plugin/UI/BrowserView.cpp
+        Plugin/UI/OttKnob.cpp
+        Plugin/UI/PanelWidgets.cpp
         Plugin/VendorDelay.cpp
         Plugin/VendorReverb.cpp
         Plugin/VendorStepSeq.cpp)

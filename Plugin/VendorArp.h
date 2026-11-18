@@ -29,6 +29,12 @@ namespace vendor
         void loadPlainArp (bool arpOn, int mode, int octaves, int rateIndex, int rateType);
 
         std::unique_ptr<juce::Component> createPanel();
+        /** Compact step editor: one cell per step showing its transpose in semitones (0, +3, +7 ...).
+            Drag a step up / down (or scroll) to change it, double-click = rest / play. With Scale Lock on,
+            steps move through notes of the key's scale. */
+        std::unique_ptr<juce::Component> createNoteGrid();
+        /** Keeps the pattern's units in step with Scale Lock (semitones <-> scale notes). Message thread. */
+        void syncScaleUnits();
 
         /** ArpSampler's randomiser with its settings (density, range, ties, velocity...) and the scale lock. */
         void randomise();

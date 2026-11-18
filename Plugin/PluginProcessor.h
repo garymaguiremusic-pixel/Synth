@@ -22,6 +22,7 @@
     Host parameters: the Virus patch bytes (as before) and the global section (prefix "g_").
     The Sylenth and Spire patch values are kept in the processor (not host-automatable in v1).
 */
+#include <juce_dsp/juce_dsp.h>
 class VCCloneAudioProcessor : public juce::AudioProcessor,
                               private juce::AsyncUpdater
 {
@@ -90,6 +91,9 @@ public:
     juce::RangedAudioParameter* getParam (int offset) const { return params[(size_t) offset]; }
 
     // global section helpers
+    /** Output EQ value mappings (knob value -> Hz / Q). */
+    static double eqFreqHz (int v) { return 20.0 * std::pow (1000.0, v / 127.0); }
+    static double eqQValue (int v) { return 0.3 * std::pow (10.0 / 0.3, v / 100.0); }
     static double envKnobToMs (double v);              // 0..127 -> 0 .. 60 s (exponential)
     static double msToEnvKnob (double ms);
 
@@ -134,6 +138,13 @@ private:
     std::array<std::pair<int, int>, 512> ccQueue {};
 
     std::unique_ptr<juce::AudioProcessor> delay, reverb;
+    struct OutputEq
+    {
+        juce::dsp::IIR::Filter<float> f[3][2];
+        float last[9] {};
+        bool valid = false;
+    } eq;
+    void processEq (juce::AudioBuffer<float>&);
     vendor::StepSequencer stepSeq;
     juce::AudioBuffer<float> scratch;
     void applyPatchFx (const vc::AnyPatch&);
@@ -182,4 +193,9 @@ namespace gid
     inline constexpr const char* oscOn[4] = { "g_osc1_on", "g_osc2_on", "g_osc3_on", "g_osc4_on" };
     inline constexpr const char* virusRetrig[3] = { "g_vretrig1", "g_vretrig2", "g_vretrig3" };
     inline constexpr const char* virusOscModel[2] = { "g_vmodel1", "g_vmodel2" };
+    // output EQ: low shelf, mid bell, high shelf
+    inline constexpr const char* eqOn = "g_eq_on";
+    inline constexpr const char* eqFreq[3] = { "g_eq_lo_f", "g_eq_mid_f", "g_eq_hi_f" };
+    inline constexpr const char* eqQ[3]    = { "g_eq_lo_q", "g_eq_mid_q", "g_eq_hi_q" };
+    inline constexpr const char* eqGain[3] = { "g_eq_lo_g", "g_eq_mid_g", "g_eq_hi_g" };
 }
