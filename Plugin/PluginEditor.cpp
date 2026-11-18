@@ -123,7 +123,7 @@ std::unique_ptr<ParamAdapter> VCClonePanel::virus (int offset, String label)
                                            isListParam (offset));
 }
 
-VCClonePanel::Control* VCClonePanel::makeControl (std::unique_ptr<ParamAdapter> a, bool forceKnob)
+VCClonePanel::Control* VCClonePanel::makeControl (std::unique_ptr<ParamAdapter> a, bool forceKnob, bool powerDot)
 {
     auto c = std::make_unique<Control>();
     auto* adapter = a.get();
@@ -136,7 +136,9 @@ VCClonePanel::Control* VCClonePanel::makeControl (std::unique_ptr<ParamAdapter> 
     if (adapter->isToggle())
     {
         c->kind = Control::Kind::Toggle;
-        auto b = std::make_unique<TextButton> (fullName);
+        std::unique_ptr<Button> b;
+        if (powerDot) b = std::make_unique<PowerDot>();
+        else b = std::make_unique<TextButton> (fullName);
         b->setClickingTogglesState (true);
         b->setTooltip (fullName);
         b->onClick = [adapter, bp = b.get(), touched]
@@ -387,10 +389,30 @@ int VCClonePanel::addHeaderGroup (int mode, StringArray labels)
     return gi;
 }
 
+int VCClonePanel::addTabBar (int mode, StringArray labels, std::vector<std::unique_ptr<ParamAdapter>> powers)
+{
+    const int gi = addGroup (PageSynth, mode, -1, labels);
+    auto& g = *groups[(size_t) gi];
+    g.header = true;
+    g.tabBar = true;
+    for (auto& p : powers) g.powers.push_back (p ? makeControl (std::move (p), false, true) : nullptr);
+    return gi;
+}
+
+WaveScope* VCClonePanel::addScope (std::function<float (float)> fn, std::function<int()> layers)
+{
+    auto w = std::make_unique<WaveScope>();
+    w->fn = std::move (fn);
+    w->layers = std::move (layers);
+    addChildComponent (*w);
+    scopes.push_back (std::move (w));
+    return scopes.back().get();
+}
+
 bool VCClonePanel::sectionVisible (const Section& s) const
 {
     if (currentPage != PageSynth || (s.mode >= 0 && s.mode != currentMode())) return false;
-    if (s.tab >= 0 && s.tab != displayTab) return false;
+    if (s.subGroup >= 0 && groups[(size_t) s.subGroup]->selected != s.subGroupIndex) return false;
     return s.group < 0 || groups[(size_t) s.group]->selected == s.groupIndex;
 }
 
@@ -649,28 +671,69 @@ void VCClonePanel::buildSynthPages()
 
 void VCClonePanel::layoutSections()
 {
-    constexpr float headerH = 18.0f;
     for (auto& sec : sections)
     {
+        const float headerH = sec.headerH;
         const auto b = sec.bounds;
-        auto body = b.reduced (5.0f, 0.0f).withTrimmedTop (headerH + 3.0f).withTrimmedBottom (4.0f);
+        auto body = b.reduced (8.0f, 0.0f).withTrimmedTop (headerH + 6.0f).withTrimmedBottom (6.0f);
+        const bool tabBar = sec.group >= 0 && groups[(size_t) sec.group]->tabBar;
         // header: selector / group buttons at the right
         float titleW = CustomLookAndFeel::uiFont (11.0f, true).getStringWidthFloat (sec.title.toUpperCase()) + 24.0f;
         if (sec.power) titleW += 34.0f;
         const auto headerArea = Rectangle<float> (b.getX() + titleW, b.getY() + 1.5f, b.getWidth() - titleW - 4.0f, headerH - 3.0f);
         if (sec.power)
             sec.power->comp->setBounds (Rectangle<float> (b.getX() + titleW - 6.0f, b.getY() + 2.0f, 34.0f, 14.0f).toNearestInt());
-        if (sec.header)
-        {
-            const int n = jmax (1, sec.header->adapter->items().size());
-            const float w = jmin (headerArea.getWidth(), (float) n * 34.0f);
-            sec.header->comp->setBounds (headerArea.withLeft (headerArea.getRight() - w).toNearestInt());
-        }
         if (sec.group >= 0)
         {
             auto& g = *groups[(size_t) sec.group];
-            const float w = jmin (headerArea.getWidth(), (float) g.labels.size() * 24.0f);
-            g.area = headerArea.withLeft (headerArea.getRight() - w).toNearestInt();
+            if (tabBar)
+                g.area = Rectangle<float> (b.getX() + 1.0f, b.getY() + 1.0f, b.getWidth() - 2.0f, headerH - 2.0f).toNearestInt();
+            else
+            {
+                const float w = jmin (headerArea.getWidth(), (float) g.labels.size() * 40.0f);
+                g.area = headerArea.withLeft (headerArea.getRight() - w).toNearestInt();
+            }
+        }
+        if (sec.subGroup >= 0)
+        {
+            groups[(size_t) sec.subGroup]->area = body.removeFromTop (20.0f).toNearestInt();
+            body.removeFromTop (6.0f);
+        }
+        // waveform picture: a column at the left of the body (the selector above it when segTop)
+        if (sec.scope)
+        {
+            auto col = body.removeFromLeft (jmin (300.0f, body.getWidth() * 0.4f));
+            body.removeFromLeft (12.0f);
+            if (sec.header && sec.segTop)
+            {
+                sec.header->comp->setBounds (col.removeFromTop (24.0f).toNearestInt());
+                col.removeFromTop (8.0f);
+            }
+            sec.scope->setBounds (col.toNearestInt());
+        }
+        else if (sec.header && sec.segTop)
+        {
+            sec.header->comp->setBounds (body.removeFromTop (22.0f).toNearestInt());
+            body.removeFromTop (6.0f);
+        }
+        if (sec.header && ! sec.segTop)
+        {
+            const int n = jmax (1, sec.header->adapter->items().size());
+            float right = headerArea.getRight();
+            if (sec.group >= 0 && ! tabBar) right = (float) groups[(size_t) sec.group]->area.getX() - 6.0f;
+            const float w = jmin (right - headerArea.getX(), (float) n * 34.0f);
+            sec.header->comp->setBounds (headerArea.withLeft (right - w).withRight (right).toNearestInt());
+        }
+        if (! sec.bottomComps.empty())
+        {
+            auto bottom = body.removeFromBottom (sec.bottomH);
+            body.removeFromBottom (6.0f);
+            const int extra = (int) sec.bottomComps.size() - 1;
+            auto side = extra > 0 ? bottom.removeFromRight (110.0f) : Rectangle<float>();
+            if (extra > 0) bottom.removeFromRight (6.0f);
+            sec.bottomComps[0]->setBounds (bottom.toNearestInt());
+            for (int i = 1; i <= extra; ++i)
+                sec.bottomComps[(size_t) i]->setBounds (side.removeFromTop (side.getHeight() / (float) (extra - i + 1)).reduced (0.0f, 3.0f).toNearestInt());
         }
         if (sec.env)
         {
@@ -684,14 +747,14 @@ void VCClonePanel::layoutSections()
         }
         if (sec.hero)
         {
-            const float side = jmin (body.getHeight(), 96.0f);
+            const float side = jmin (body.getHeight(), 120.0f);
             sec.hero->comp->setBounds (body.removeFromLeft (side).withSizeKeepingCentre (side, side).toNearestInt());
             body.removeFromLeft (4.0f);
         }
         // grid: the largest cell that fits every control (combos take two cells)
         int cells = 0;
         for (auto* c : sec.controls) cells += c->kind == Control::Kind::Combo ? 2 : 1;
-        float cell = 58.0f;
+        float cell = 64.0f;
         int cols = 1;
         for (; cell > 30.0f; cell -= 1.0f)
         {
@@ -713,7 +776,7 @@ void VCClonePanel::layoutSections()
             if (used + w > cols) { ++rows; used = 0; }
             used += w;
         }
-        const float ch = jmin (cell, 66.0f);
+        const float ch = jmin (cell, 72.0f);
         float y = body.getY() + jmax (0.0f, (body.getHeight() - ch * (float) rows) * 0.5f);
         used = 0;
         for (auto* c : sec.controls)
@@ -833,6 +896,8 @@ int VCClonePanel::currentMode() const { return (int) processor.getMode(); }
 
 bool VCClonePanel::panelVisible (const Panel& p) const
 {
+    (void) p;
+    return false;   // the one-window layout shows everything in sections
     if (currentPage != PageSynth || displayTab != TabMod) return false;
     if (p.page != (modSub == 0 ? PageMatrix : PageMod)) return false;
     if (p.mode >= 0 && p.mode != currentMode()) return false;
@@ -974,6 +1039,8 @@ void VCClonePanel::updateVisibility()
         if (sec.hero) sec.hero->comp->setVisible (vis);
         if (sec.env) sec.env->setVisible (vis);
         if (sec.power) sec.power->comp->setVisible (vis);
+        if (sec.scope) sec.scope->setVisible (vis);
+        for (auto* c : sec.bottomComps) c->setVisible (vis);
     }
     for (auto& g : groups)
     {
@@ -987,7 +1054,15 @@ void VCClonePanel::updateVisibility()
             {
                 auto& b = *g->buttons[(size_t) i];
                 b.setVisible (vis);
-                b.setBounds (g->area.getX() + i * bw, g->area.getY(), bw - 2, g->area.getHeight());
+                auto r = Rectangle<int> (g->area.getX() + i * bw, g->area.getY(), bw - 2, g->area.getHeight());
+                if (g->tabBar && i < (int) g->powers.size() && g->powers[(size_t) i] != nullptr)
+                {
+                    auto* p = g->powers[(size_t) i]->comp.get();
+                    p->setVisible (vis);
+                    p->setBounds (r.getX() + 8, r.getCentreY() - 10, 20, 20);
+                    p->toFront (false);
+                }
+                b.setBounds (r);
                 b.setToggleState (i == g->selected, dontSendNotification);
             }
             continue;
@@ -1152,19 +1227,37 @@ void VCClonePanel::paint (Graphics& g)
     for (auto& sec : sections)
         if (sectionVisible (sec))
         {
-            CustomLookAndFeel::drawPanel (g, sec.bounds, {});
+            // a card: rounded, soft gradient; a tab bar draws its strip, other cards a title
+            const auto cb = sec.bounds;
+            g.setColour (Colours::black.withAlpha (0.35f));
+            g.fillRoundedRectangle (cb.translated (0.0f, 2.0f), 11.0f);
+            g.setGradientFill (ColourGradient (Colour (0xff2c3035), 0.0f, cb.getY(), Colour (0xff23262a), 0.0f, cb.getBottom(), false));
+            g.fillRoundedRectangle (cb, 10.0f);
+            g.setColour (Colour (0xff0c0d0f));
+            g.drawRoundedRectangle (cb.reduced (0.5f), 10.0f, 1.0f);
+            if (sec.group >= 0 && groups[(size_t) sec.group]->tabBar)
+            {
+                auto strip = cb.withHeight (sec.headerH).reduced (1.0f);
+                Path sp;
+                sp.addRoundedRectangle (strip.getX(), strip.getY(), strip.getWidth(), strip.getHeight(), 9.0f, 9.0f, true, true, false, false);
+                g.setColour (Colour (0xff1a1d20));
+                g.fillPath (sp);
+                g.setColour (Colour (0xff0c0d0f));
+                g.drawHorizontalLine ((int) strip.getBottom(), strip.getX(), strip.getRight());
+                continue;
+            }
             // title at the left of the header, then a blue dot
             const auto font = CustomLookAndFeel::uiFont (11.0f, true);
             const auto t = sec.title.toUpperCase();
             const float tw = font.getStringWidthFloat (t);
-            const auto ta = Rectangle<float> (sec.bounds.getX() + 8.0f, sec.bounds.getY(), tw + 2.0f, 18.0f);
+            const auto ta = Rectangle<float> (sec.bounds.getX() + 12.0f, sec.bounds.getY() + 2.0f, tw + 2.0f, sec.headerH);
             g.setFont (font);
             g.setColour (Colours::black.withAlpha (0.45f));
             g.drawText (t, ta.translated (0.0f, 1.0f), Justification::centredLeft);
             g.setColour (VirusColours::headerText);
             g.drawText (t, ta, Justification::centredLeft);
             g.setColour (VirusColours::blue);
-            g.fillEllipse (ta.getRight() + 4.0f, sec.bounds.getY() + 6.0f, 6.0f, 6.0f);
+            g.fillEllipse (ta.getRight() + 5.0f, ta.getCentreY() - 3.0f, 6.0f, 6.0f);
         }
 
     if (currentPage == PageSynth && (displayTab == TabDelay || displayTab == TabReverb))

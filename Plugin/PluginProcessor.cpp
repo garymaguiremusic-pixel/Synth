@@ -89,6 +89,7 @@ AudioProcessorValueTreeState::ParameterLayout VCCloneAudioProcessor::createLayou
     intP (gid::volume, "Master Volume", 0, 127, 100);
     auto hzText = [] (int v) { return v == 0 ? String ("Off") : String (v) + " Hz"; };
     intP (gid::monoHz, "Mono (below)", 0, 200, 0, hzText);
+    boolP (gid::distOn, "Distortion On", false);
     intP (gid::lockHz, "Phase Lock (below)", 0, 200, 0, hzText);
     for (int o = 0; o < 4; ++o) boolP (gid::oscOn[o], ("Osc " + String (o + 1) + " On").toRawUTF8(), true);
     for (int o = 0; o < 3; ++o) boolP (gid::virusRetrig[o], ("Virus Osc " + String (o + 1) + " Retrig").toRawUTF8(), false);
@@ -248,7 +249,7 @@ void VCCloneAudioProcessor::updateGlobalParams()
     g.envAmount = raw (gid::envAmt) - 64.0;
     g.keytrack = (raw (gid::keytrack) - 64.0) / 64.0;
     g.velocity = (raw (gid::velocity) - 64.0) / 64.0;
-    g.saturationCurve = roundToInt (raw (gid::satCurve));
+    g.saturationCurve = raw (gid::distOn) > 0.5f ? roundToInt (raw (gid::satCurve)) : 0;
     g.saturationDrive = raw (gid::satDrive) / 127.0;
     g.saturationMix = raw (gid::satMix) / 127.0;
     g.volume = std::pow (raw (gid::volume) / 100.0, 2.0);

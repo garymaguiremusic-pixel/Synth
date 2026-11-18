@@ -148,9 +148,25 @@ void CustomLookAndFeel::drawSmallKnob (Graphics& g, Rectangle<float> area, float
     const float R = size * 0.5f - 1.0f;
     const float angle = start + pos * (end - start);
 
-    drawTicks (g, c, R - 3.5f, R, start, end, 21, Colour (0xff8d949b).withAlpha (0.8f), 0.8f);
+    // glowing value ring (dark track, blue arc)
+    {
+        const float ringR = R - 2.5f;
+        Path track;
+        track.addCentredArc (c.x, c.y, ringR, ringR, 0.0f, start, end, true);
+        g.setColour (Colour (0xff111417));
+        g.strokePath (track, PathStrokeType (3.6f, PathStrokeType::curved, PathStrokeType::rounded));
+        if (pos > 0.001f)
+        {
+            Path value;
+            value.addCentredArc (c.x, c.y, ringR, ringR, 0.0f, start, angle, true);
+            g.setColour (VirusColours::blueGlow.withAlpha (0.28f));
+            g.strokePath (value, PathStrokeType (7.0f, PathStrokeType::curved, PathStrokeType::rounded));
+            g.setColour (VirusColours::blue);
+            g.strokePath (value, PathStrokeType (3.0f, PathStrokeType::curved, PathStrokeType::rounded));
+        }
+    }
 
-    const float bodyR = R - 6.0f;
+    const float bodyR = R - 6.5f;
     const auto body = Rectangle<float> (bodyR * 2.0f, bodyR * 2.0f).withCentre (c);
 
     Path bodyPath;

@@ -175,6 +175,7 @@ namespace gid
     inline constexpr const char* reverbOn = "g_reverb_on";
     inline constexpr const char* volume = "g_volume";
     inline constexpr const char* monoHz = "g_mono_hz";
+    inline constexpr const char* distOn = "g_dist_on";
     inline constexpr const char* lockHz = "g_lock_hz";
     inline constexpr const char* oscOn[4] = { "g_osc1_on", "g_osc2_on", "g_osc3_on", "g_osc4_on" };
     inline constexpr const char* virusRetrig[3] = { "g_vretrig1", "g_vretrig2", "g_vretrig3" };

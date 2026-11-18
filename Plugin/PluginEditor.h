@@ -63,10 +63,18 @@ private:
         EnvelopeGraph* env = nullptr;
         int group = -1, groupIndex = 0;           // alternatives share one block (LFO 1..4)
         int tab = -1;                             // shown only on this tab of the centre display
+        float headerH = 18.0f;                    // 40 for a tab bar
+        bool segTop = false;                      // header selector as the first row of the body
+        WaveScope* scope = nullptr;               // waveform picture at the left of the body
+        std::vector<juce::Component*> bottomComps;   // bottom of the body: first wide, the rest stacked at the right
+        float bottomH = 0.0f;
+        int subGroup = -1, subGroupIndex = 0;     // a second selector (matrix slot) shown as a button row in the body
     };
     struct Group
     {
         bool header = false;                      // buttons in a Synth-page section header
+        bool tabBar = false;                      // full-width tabs, each with an on/off dot
+        std::vector<Control*> powers;
         int page = 0, mode = -1, row = 0, selected = 0;
         juce::StringArray labels;
         std::vector<std::unique_ptr<juce::TextButton>> buttons;
@@ -74,13 +82,15 @@ private:
     };
 
     void timerCallback() override;
-    Control* makeControl (std::unique_ptr<ParamAdapter>, bool forceKnob = false);
+    Control* makeControl (std::unique_ptr<ParamAdapter>, bool forceKnob = false, bool powerDot = false);
     Control* makeSegment (std::unique_ptr<ParamAdapter>);
     Section& addSection (int mode, juce::String title, juce::Rectangle<float> bounds, std::unique_ptr<ParamAdapter> header,
                          std::unique_ptr<ParamAdapter> hero, std::vector<std::unique_ptr<ParamAdapter>> body,
                          int group = -1, int groupIndex = 0);
     Section& addEnvSection (int mode, juce::String title, juce::Rectangle<float> bounds, std::vector<std::unique_ptr<ParamAdapter>> adsrAndMore);
     int addHeaderGroup (int mode, juce::StringArray labels);
+    int addTabBar (int mode, juce::StringArray labels, std::vector<std::unique_ptr<ParamAdapter>> powers);
+    WaveScope* addScope (std::function<float (float)> fn, std::function<int()> layers = {});
     void buildSynthPages();
     void layoutSections();
     bool sectionVisible (const Section&) const;
@@ -134,6 +144,9 @@ private:
     Control* fxOn[2] {};                          // Delay / Reverb on buttons in the display
     juce::Rectangle<float> displayArea;
     std::vector<std::unique_ptr<EnvelopeGraph>> envGraphs;
+    std::vector<std::unique_ptr<WaveScope>> scopes;
+    VoiceMeter voiceMeter;
+    std::array<Control*, 3> voiceModeCombo {};    // per synth mode: polyphony / voice mode
 
     // embedded panels from Gary's plugins
     std::unique_ptr<juce::Component> delayPanel, reverbPanel, stepGrid;

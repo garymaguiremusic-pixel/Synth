@@ -216,3 +216,85 @@ void EnvelopeGraph::mouseUp (const MouseEvent&)
 }
 
 void EnvelopeGraph::refresh() { repaint(); }
+
+//==============================================================================
+void PowerDot::paintButton (Graphics& g, bool highlighted, bool)
+{
+    auto b = getLocalBounds().toFloat();
+    const float d = jmin (b.getWidth(), b.getHeight()) - 4.0f;
+    const auto r = Rectangle<float> (d, d).withCentre (b.getCentre());
+    if (getToggleState())
+    {
+        g.setColour (VirusColours::blue.withAlpha (0.35f));
+        g.fillEllipse (r.expanded (2.5f));
+        g.setColour (VirusColours::blue);
+        g.fillEllipse (r);
+        g.setColour (Colours::white.withAlpha (0.5f));
+        g.fillEllipse (r.reduced (d * 0.3f).translated (-d * 0.1f, -d * 0.1f));
+    }
+    else
+    {
+        g.setColour (Colour (highlighted ? 0xff3a4047 : 0xff2b3035));
+        g.fillEllipse (r);
+    }
+    g.setColour (Colour (0xff0a0b0c));
+    g.drawEllipse (r, 1.5f);
+}
+
+void WaveScope::paint (Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    g.setColour (Colour (0xff0b0d0f));
+    g.fillRoundedRectangle (b, 6.0f);
+    g.setColour (Colour (0xff08090a));
+    g.drawRoundedRectangle (b.reduced (0.5f), 6.0f, 1.0f);
+    if (! fn) return;
+    const auto area = b.reduced (8.0f, 12.0f);
+    const int n = jlimit (1, 5, layers ? layers() : 1);
+    for (int l = n - 1; l >= 0; --l)
+    {
+        Path p;
+        const float off = l == 0 ? 0.0f : (float) l * 0.035f * (l % 2 ? 1.0f : -1.0f);
+        for (int i = 0; i <= 180; ++i)
+        {
+            const float x = (float) i / 180.0f;
+            float ph = x * 2.0f + off;
+            ph -= std::floor (ph);
+            const float y = jlimit (-1.0f, 1.0f, fn (ph));
+            const Point<float> pt (area.getX() + x * area.getWidth(), area.getCentreY() - y * area.getHeight() * 0.5f);
+            if (i == 0) p.startNewSubPath (pt); else p.lineTo (pt);
+        }
+        if (l == 0)
+        {
+            g.setColour (VirusColours::blue.withAlpha (0.25f));
+            g.strokePath (p, PathStrokeType (6.0f, PathStrokeType::curved, PathStrokeType::rounded));
+            g.setColour (Colour (0xff7cc4ff));
+            g.strokePath (p, PathStrokeType (2.2f, PathStrokeType::curved, PathStrokeType::rounded));
+        }
+        else
+        {
+            g.setColour (VirusColours::blue.withAlpha (0.28f));
+            g.strokePath (p, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
+        }
+    }
+}
+
+void VoiceMeter::paint (Graphics& g)
+{
+    const int a = active ? active() : 0, m = jmax (1, maximum ? maximum() : 8);
+    auto b = getLocalBounds().toFloat();
+    auto text = b.removeFromRight (40.0f);
+    const int bars = jmin (m, 16);
+    const float w = jmin (5.0f, (b.getWidth() - 2.0f * (float) bars) / (float) bars);
+    for (int i = 0; i < bars; ++i)
+    {
+        const auto r = Rectangle<float> (b.getX() + (float) i * (w + 2.0f), b.getCentreY() - 8.0f, w, 16.0f);
+        const bool lit = i < (int) std::ceil ((double) a * bars / m);
+        if (lit) { g.setColour (VirusColours::blue.withAlpha (0.35f)); g.fillRoundedRectangle (r.expanded (1.5f), 2.0f); }
+        g.setColour (lit ? VirusColours::blue : Colour (0xff2b3035));
+        g.fillRoundedRectangle (r, 1.0f);
+    }
+    g.setColour (Colour (0xffe8edf2));
+    g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
+    g.drawText (String (a) + "/" + String (m), text, Justification::centredRight);
+}

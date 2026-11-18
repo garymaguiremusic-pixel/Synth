@@ -52,3 +52,29 @@ private:
     int dragPoint = -1;
     float last[4] {};
 };
+
+//==============================================================================
+/** Round on/off button with a blue glow (oscillator / FX tabs). */
+class PowerDot : public juce::Button
+{
+public:
+    PowerDot() : juce::Button ("power") { setClickingTogglesState (true); }
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+};
+
+/** A glowing waveform picture; fn gives the wave at x 0..1 (y -1..1). layers > 1 draws detuned copies. */
+class WaveScope : public juce::Component
+{
+public:
+    std::function<float (float)> fn;
+    std::function<int()> layers;
+    void paint (juce::Graphics&) override;
+};
+
+/** Voices in use as a row of bars plus "3/8". */
+class VoiceMeter : public juce::Component
+{
+public:
+    std::function<int()> active, maximum;
+    void paint (juce::Graphics&) override;
+};
