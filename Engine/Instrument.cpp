@@ -61,6 +61,7 @@ GlobalVoiceSettings Instrument::makeVoiceSettings (const GlobalParams& p, double
     s.velocity = p.velocity;
     s.oscOn = p.oscOn;
     s.virusRetrig = p.virusRetrig;
+    s.virusOscModel = p.virusOscModel;
     s.lockHz = p.lockHz;
     return s;
 }

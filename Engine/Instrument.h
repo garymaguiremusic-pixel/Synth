@@ -65,6 +65,7 @@ struct GlobalParams
     double lockHz = 0.0;                 // Phase Lock (see GlobalVoiceSettings)
     std::array<bool, 4> oscOn { true, true, true, true };
     std::array<bool, 3> virusRetrig { false, false, false };
+    std::array<int, 2> virusOscModel { 0, 0 };
 };
 
 class Instrument

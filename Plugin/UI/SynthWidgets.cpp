@@ -65,7 +65,9 @@ static String shortName (const String& s)
         { "LowPass", "LP" }, { "Lowpass", "LP" }, { "HighPass", "HP" }, { "Highpass", "HP" }, { "BandPass", "BP" }, { "Bandpass", "BP" },
         { "BandStop", "BS" }, { "Bypass", "Off" }, { "Analog 1P", "1P" }, { "Analog 2P", "2P" }, { "Analog 3P", "3P" }, { "Analog 4P", "4P" },
         { "Perfecto", "Perf" }, { "Infecto", "Infc" }, { "Scorpio", "Scrp" }, { "Shaper", "Shpr" }, { "Classic", "Clas" },
-        { "AMSync", "AMSy" }, { "SawPWM", "PWM" }, { "HardFM", "HFM" }, { "Vowel", "Vowl" } };
+        { "AMSync", "AMSy" }, { "SawPWM", "PWM" }, { "HardFM", "HFM" }, { "Vowel", "Vowl" },
+        { "HyperSaw", "Hyper" }, { "Wavetable", "WT" }, { "Wave PWM", "WPWM" }, { "Grain Simple", "GrS" }, { "Grain Complex", "GrC" },
+        { "Formant Simple", "FmS" }, { "Formant Complex", "FmC" } };
     for (auto& [l, sh] : abbrev) if (s.equalsIgnoreCase (l)) return sh;
     return s;
 }

@@ -1,5 +1,6 @@
 // Developer tool: renders every tab of the editor, in every synth mode, to PNG.
 // usage: vc_ui_snapshot <outDir> [presetFile] [scale]
+#include <cstdlib>
 #include "PluginProcessor.h"
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -23,7 +24,10 @@ int main (int argc, char** argv)
     proc->setRateAndBufferSizeDetails (48000.0, 512);
     proc->prepareToPlay (48000.0, 512);
     if (argc > 2 && juce::String (argv[2]).isNotEmpty())
+    {
         std::printf ("load: %s\n", proc->loadBankFile (juce::File (juce::String (argv[2]))).toRawUTF8());
+        if (auto* idx = std::getenv ("VC_PROGRAM")) proc->setCurrentProgram (std::atoi (idx));
+    }
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc->createEditor());
     ed->setSize ((int) (ed->getWidth() * scale), (int) (ed->getHeight() * scale));
     auto* panel = ed->getChildComponent (0);

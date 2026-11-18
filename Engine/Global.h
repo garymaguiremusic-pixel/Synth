@@ -41,6 +41,8 @@ struct GlobalVoiceSettings
     double velocity = 0.0;               // -1..+1 velocity -> envelope amount
     std::array<bool, 4> oscOn { true, true, true, true };   // per-oscillator on/off (Virus: Osc 1, 2, 3, Sub/Noise/Ring)
     std::array<bool, 3> virusRetrig { false, false, false }; // Virus mode: restart Osc 1..3 at every note
+    std::array<int, 2> virusOscModel { 0, 0 };               // Virus TI models for Osc 1/2: Classic, HyperSaw, Wavetable,
+                                                             // Wave PWM, Grain Simple, Grain Complex, Formant Simple, Formant Complex
     double lockHz = 0.0;                 // Phase Lock: below this the unison stack is replaced by one coherent copy (0 = off)
 };
 

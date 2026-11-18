@@ -135,6 +135,7 @@ private:
     std::unique_ptr<juce::AudioProcessor> delay, reverb;
     vendor::StepSequencer stepSeq;
     juce::AudioBuffer<float> scratch;
+    void applyPatchFx (const vc::AnyPatch&);
     // keys played (for "Drag MIDI": the arp renders the chord you last held)
     std::vector<int> heldNow, lastHeld;
     mutable juce::SpinLock heldLock;
@@ -177,4 +178,5 @@ namespace gid
     inline constexpr const char* lockHz = "g_lock_hz";
     inline constexpr const char* oscOn[4] = { "g_osc1_on", "g_osc2_on", "g_osc3_on", "g_osc4_on" };
     inline constexpr const char* virusRetrig[3] = { "g_vretrig1", "g_vretrig2", "g_vretrig3" };
+    inline constexpr const char* virusOscModel[2] = { "g_vmodel1", "g_vmodel2" };
 }

@@ -488,10 +488,10 @@ void VCClonePanel::buildSynthPages()
         auto V = [this] (int o, const char* l = "") -> AP
         { return VCCloneAudioProcessor::isHostParameter (o) ? virus (o, l) : nullptr; };
         auto oct = [&] (int o) -> AP { return std::make_unique<OctaveAdapter> (V (o), 64); };
-        addSection (M, "Osc 1", osc1, nullptr, nullptr,
+        addSection (M, "Osc 1", osc1, H (gid::virusOscModel[0], "Model"), nullptr,
                     list (V (Osc1_Wave_Select, "Wave"), oct (Osc1_Semitone), V (Osc1_Semitone, "Semi"), V (Osc1_Shape, "Shape"), V (Osc1_Pulsewidth),
                           V (Osc1_Keyfollow, "Key"), V (Osc1_Shape_Velocity), H (gid::virusRetrig[0], "Retrig")));
-        addSection (M, "Osc 2", osc2, nullptr, nullptr,
+        addSection (M, "Osc 2", osc2, H (gid::virusOscModel[1], "Model"), nullptr,
                     list (V (Osc2_Wave_Select, "Wave"), oct (Osc2_Semitone), H (gid::virusRetrig[1], "Retrig"), V (Osc2_Shape, "Shape"), V (Osc2_Pulsewidth), V (Osc2_Semitone, "Semi"),
                           V (Osc2_Detune, "Detune"), V (Osc2_FM_Amount), V (Osc_FM_Mode), V (Osc2_Sync, "Sync"), V (Osc2_Filt_Env_Amt),
                           V (FM_Filt_Env_Amt), V (Osc2_Keyfollow, "Key"), V (Osc2_Shape_Velocity), V (Fm_Amount_Velocity)));
@@ -776,6 +776,13 @@ VCClonePanel::VCClonePanel (VCCloneAudioProcessor& p) : processor (p)
     buildSpire();
     buildGlobal();
     buildSynthPages();
+    fxOn[0] = makeControl (host (gid::delayOn, "Delay On"));
+    fxOn[1] = makeControl (host (gid::reverbOn, "Reverb On"));
+    for (auto* c : fxOn) static_cast<Button*> (c->comp.get())->setButtonText (c == fxOn[0] ? "DELAY ON" : "REVERB ON");
+    prevButton.setTooltip ("Previous preset");
+    nextButton.setTooltip ("Next preset");
+    addAndMakeVisible (prevButton);
+    addAndMakeVisible (nextButton);
     const char* subNames[] = { "MATRIX", "MORE" };
     for (int i = 0; i < 2; ++i)
     {
@@ -1014,6 +1021,12 @@ void VCClonePanel::updateVisibility()
     }
     for (int i = 0; i < 2; ++i)
     {
+        const bool show = synth && displayTab == (i == 0 ? TabDelay : TabReverb);
+        fxOn[i]->comp->setVisible (show);
+        fxOn[i]->comp->setBounds ((int) displayArea.getRight() - 112, (int) displayArea.getY() + 4, 104, 20);
+    }
+    for (int i = 0; i < 2; ++i)
+    {
         auto& b = modSubButtons[(size_t) i];
         bool any = false;
         for (auto& p : panels) if (p.page == (i == 0 ? PageMatrix : PageMod) && (p.mode < 0 || p.mode == currentMode())) any = true;
@@ -1048,7 +1061,9 @@ void VCClonePanel::resized()
 {
     // top bar: Browser | soundset name | Import | Export
     browserButton.setBounds (170, 7, 84, 22);
-    lcdTop = Rectangle<int> (262, 5, kWidth - 262 - 196, 26);
+    lcdTop = Rectangle<int> (262, 5, kWidth - 262 - 196 - 64, 26);
+    prevButton.setBounds (lcdTop.getRight() + 4, 7, 28, 22);
+    nextButton.setBounds (lcdTop.getRight() + 34, 7, 28, 22);
     loadButton.setBounds (kWidth - 188, 7, 88, 22);
     exportButton.setBounds (kWidth - 96, 7, 88, 22);
     // bottom bar: synth mode | LCD | status | help

@@ -724,7 +724,7 @@ std::array<float, SylenthEngine::kNumParams> SylenthEngine::fromSylenthPreset (c
         auto& st = *steps;
         st = {};
         st.arpOn = r (sy::ArpOn) > 0.5f;
-        st.present = st.arpOn;
+        st.present = true;          // every Sylenth preset carries its 16 arp steps: always load them
         st.mode = idx (r (sy::ArpMode), 10);
         st.octaves = 1 + idx (r (sy::ArpOctave), 4);
         const std::string t = sy::kArpTime[std::clamp ((int) std::lround (r (sy::ArpTime) * 32.0f), 0, 32)];

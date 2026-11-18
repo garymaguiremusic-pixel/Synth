@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "SpireLists.h"
 #include "PluginEditor.h"
 #include "VirusCLayout.h"
 #include "Tables/Tables.h"
@@ -91,6 +92,9 @@ AudioProcessorValueTreeState::ParameterLayout VCCloneAudioProcessor::createLayou
     intP (gid::lockHz, "Phase Lock (below)", 0, 200, 0, hzText);
     for (int o = 0; o < 4; ++o) boolP (gid::oscOn[o], ("Osc " + String (o + 1) + " On").toRawUTF8(), true);
     for (int o = 0; o < 3; ++o) boolP (gid::virusRetrig[o], ("Virus Osc " + String (o + 1) + " Retrig").toRawUTF8(), false);
+    for (int o = 0; o < 2; ++o)
+        choiceP (gid::virusOscModel[o], ("Virus Osc " + String (o + 1) + " Model").toRawUTF8(),
+                 { "Classic", "HyperSaw", "Wavetable", "Wave PWM", "Grain Simple", "Grain Complex", "Formant Simple", "Formant Complex" }, 0);
 
     // Virus patch bytes
     const auto init = vc::makeInitPatch();
@@ -133,6 +137,14 @@ VCCloneAudioProcessor::VCCloneAudioProcessor()
 
     delay = vendor::createVirusDelay();
     reverb = vendor::createLeadVerb();
+    {
+        vendor::DelaySettings d;          // dotted 1/8, clearly audible when switched on
+        d.clockBeats = 0.75; d.send = 0.45; d.feedback = 0.45;
+        vendor::applyDelay (*delay, d);
+        vendor::ReverbSettings r;         // a medium hall
+        r.mode = "Hall"; r.decay = 0.55; r.dryWet = 0.3;
+        vendor::applyReverb (*reverb, r);
+    }
     patchName = "Init";
 }
 
@@ -244,6 +256,7 @@ void VCCloneAudioProcessor::updateGlobalParams()
     g.lockHz = raw (gid::lockHz);
     for (int o = 0; o < 4; ++o) g.oscOn[(size_t) o] = raw (gid::oscOn[o]) > 0.5f;
     for (int o = 0; o < 3; ++o) g.virusRetrig[(size_t) o] = raw (gid::virusRetrig[o]) > 0.5f;
+    for (int o = 0; o < 2; ++o) g.virusOscModel[(size_t) o] = roundToInt (raw (gid::virusOscModel[o]));
 }
 
 void VCCloneAudioProcessor::syncModeEngines()
@@ -484,9 +497,15 @@ void VCCloneAudioProcessor::loadAnyPatch (const vc::AnyPatch& a)
     switch (a.type)
     {
         case vc::PatchType::Virus:
+        {
             setMode (vc::SynthMode::Virus);
             loadPatch (a.virus);
+            // Virus TI: oscillator models from the TI page (Classic, HyperSaw, Wavetable ...); Virus C: Classic
+            const bool ti = a.virus.extra.size() >= 257;
+            setParamValue (gid::virusOscModel[0], ti ? (float) juce::jlimit (0, 7, (int) a.virus.extra[1 + 30]) : 0.0f);
+            setParamValue (gid::virusOscModel[1], ti ? (float) juce::jlimit (0, 7, (int) a.virus.extra[1 + 35]) : 0.0f);
             break;
+        }
 
         case vc::PatchType::Spire:
         {
@@ -535,7 +554,176 @@ void VCCloneAudioProcessor::loadAnyPatch (const vc::AnyPatch& a)
             break;
         }
     }
+    applyPatchFx (a);
     ++bankVersion;
+}
+
+//==============================================================================
+// The patch's own delay / reverb, set onto the global Virus Delay and LeadVerb (closest match)
+namespace
+{
+    double parseDivisionBeats (juce::String t)       // "1/8D", "3/16", "1/4T" -> quarter-note beats
+    {
+        t = t.trim().toUpperCase();
+        const bool dotted = t.endsWithChar ('D') || t.endsWithChar ('.'), triplet = t.endsWithChar ('T');
+        if (dotted || triplet) t = t.dropLastCharacters (1).trim();
+        const double num = t.upToFirstOccurrenceOf ("/", false, false).getDoubleValue();
+        const double den = t.fromFirstOccurrenceOf ("/", false, false).getDoubleValue();
+        if (num <= 0 || den <= 0) return 0.0;
+        return 4.0 * num / den * (dotted ? 1.5 : triplet ? 2.0 / 3.0 : 1.0);
+    }
+}
+
+void VCCloneAudioProcessor::applyPatchFx (const vc::AnyPatch& a)
+{
+    vendor::DelaySettings d;
+    vendor::ReverbSettings r;
+    bool delayOn = false, reverbOn = false;
+
+    if (a.type == vc::PatchType::Virus)
+    {
+        const auto& raw = a.virus.raw;
+        const bool ti = a.virus.extra.size() >= 257;
+        auto ext = [&] (int i) { return ti ? (int) a.virus.extra[(size_t) (1 + i)] : 0; };   // TI page 6E
+        const int mode = raw[112], send = raw[113];
+        const int pingPongTI[] = { 2, 3, 4, 5 };
+        static const char* ratios[] = { "2:1", "4:3", "4:1", "8:7" };
+        static const char* patterns[] = { "1+1", "2+1", "3+1", "4+1", "5+1", "2+3", "2+5", "3+2", "3+3", "3+4", "3+5", "4+3", "4+5", "5+2", "5+3", "5+4", "5+5" };
+        (void) pingPongTI;
+        juce::String type;
+        bool isReverbC = false;
+        if (ti)
+        {
+            if (mode == 1) type = "Simple Delay";
+            else if (mode >= 2 && mode <= 5) type = juce::String ("Ping Pong ") + ratios[mode - 2];
+            else if (mode >= 6 && mode <= 22) type = juce::String ("Pattern ") + patterns[mode - 6];
+        }
+        else
+        {
+            if (mode == 1) type = "Simple Delay";
+            else if (mode >= 2 && mode <= 4) isReverbC = true;
+            else if (mode >= 5 && mode <= 8) type = juce::String ("Ping Pong ") + ratios[mode - 5];
+            else if (mode >= 9 && mode <= 25) type = juce::String ("Pattern ") + patterns[mode - 9];
+            else if (mode == 26) type = "Pattern 1+1";
+        }
+        static const double clockBeats[] = { 0, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0 / 2, 1, 2, 3.0 / 16, 3.0 / 8, 3.0 / 4, 1.5,
+                                             1.0 / 6, 1.0 / 3, 2.0 / 3, 4.0 / 3, 8.0 / 3, 3.0 };
+        if (type.isNotEmpty() && send > 0)
+        {
+            delayOn = true;
+            const int dtype = ti ? ext (10) : 0;            // TI: Classic, Tape Clocked, Tape Free, Tape Doppler
+            d.kind = dtype == 1 ? vendor::DelaySettings::Kind::TapeClocked : dtype == 2 ? vendor::DelaySettings::Kind::TapeFree
+                   : dtype == 3 ? vendor::DelaySettings::Kind::TapeDoppler : vendor::DelaySettings::Kind::Classic;
+            d.classicType = type;
+            d.send = send / 127.0;
+            d.timeMs = juce::jmax (1.0, raw[114] * 5.46);   // Virus: 0 .. ~693 ms
+            d.clockBeats = clockBeats[juce::jlimit (0, 16, (int) raw[148])];
+            d.feedback = raw[115] / 127.0;
+            d.rate = raw[116] / 127.0;
+            d.depth = raw[117] / 127.0;
+            d.shape = juce::jlimit (0, 4, (int) raw[118]);
+            d.color = raw[119] / 127.0;
+        }
+        if (ti)
+        {
+            // TI reverb: mode, send, type (Ambience, Small Room, Large Room, Hall), time, damping, colour, predelay
+            if (ext (1) > 0 && ext (2) > 0)
+            {
+                reverbOn = true;
+                static const char* types[] = { "Ambience", "Plate1", "Plate2", "Hall" };
+                r.mode = types[juce::jlimit (0, 3, ext (3))];
+                r.dryWet = ext (2) / 127.0;
+                r.decay = ext (4) / 127.0;
+                r.damp = ext (5) / 127.0;
+                r.color = ext (6) / 127.0;
+                r.predelayMs = ext (7) * 500.0 / 92.0;
+            }
+        }
+        else if (isReverbC && send > 0)
+        {
+            // Virus C: the delay/reverb section in reverb mode (decay, damping, colour, predelay = delay time)
+            reverbOn = true;
+            r.mode = raw[116] < 40 ? "Plate1" : raw[116] < 90 ? "Plate2" : "Hall";
+            r.dryWet = send / 127.0;
+            r.decay = raw[116] / 127.0;
+            r.damp = raw[118] / 127.0;
+            r.color = raw[119] / 127.0;
+            r.predelayMs = raw[114] * 500.0 / 127.0;
+        }
+    }
+    else if (a.type == vc::PatchType::Sylenth)
+    {
+        const auto& v = a.sylenth.values;
+        auto sv = [&] (int i) { return i < (int) v.size() ? (double) v[(size_t) i] : 0.0; };
+        static const char* times[33] = { "1/64", "1/32T", "1/32T", "1/64D", "1/64D", "1/32", "1/32", "1/16T", "1/16T", "1/16T", "1/32D",
+                                         "1/32D", "1/16", "1/16", "1/8T", "1/8T", "1/16D", "1/16D", "1/16D", "1/8", "1/8", "1/4T", "1/4T",
+                                         "1/8D", "1/8D", "1/4", "1/4", "1/2T", "1/2T", "1/2T", "1/4D", "1/4D", "1/2" };
+        auto beats = [&] (double x) { return parseDivisionBeats (times[juce::jlimit (0, 32, (int) std::lround (x * 32.0))]); };
+        if (sv (220) > 0.5 && sv (25) > 0.0)
+        {
+            delayOn = true;
+            d.kind = vendor::DelaySettings::Kind::Spire;
+            d.spireSync = true;
+            d.leftBeats = beats (sv (32));
+            d.rightBeats = beats (sv (33));
+            d.feedback = sv (26);
+            d.pingPong = sv (29) > 0.5;
+            d.wide = sv (34);
+            d.dryWet = sv (25);
+            d.color = 0.5 + 0.5 * (sv (28) - sv (27)) * 0.5;   // low / high cut as a tilt
+        }
+        if (sv (224) > 0.5 && sv (143) > 0.0)
+        {
+            reverbOn = true;
+            r.mode = sv (145) > 0.7 ? "Hall" : sv (145) > 0.35 ? "Plate2" : "Plate1";
+            r.decay = sv (145);
+            r.damp = sv (142);
+            r.predelayMs = sv (144) * 200.0;
+            r.wide = sv (146) * 0.5;
+            r.dryWet = sv (143);
+        }
+    }
+    else if (a.type == vc::PatchType::Spire)
+    {
+        auto sp = [&] (const char* key, double def) { auto it = a.spire.find (key); return it != a.spire.end() ? (double) it->second : def; };
+        auto flag = [] (double x) { return (int) (x * 1.99) != 0; };
+        auto listIdx = [] (double x) { return (int) (x * 999.99); };
+        if (! flag (sp ("del_mute", 1.0)) && sp ("del_wet", 0.0) > 0.0)
+        {
+            delayOn = true;
+            d.kind = vendor::DelaySettings::Kind::Spire;
+            d.spireSync = flag (sp ("del_sync", 1.0));
+            const auto& names = vc::spire::lists::arpSpeeds;
+            auto divBeats = [&] (double x) { return parseDivisionBeats (names[juce::jlimit (0, vc::spire::lists::arpSpeedsCount - 1, listIdx (x))]); };
+            d.leftBeats = divBeats (sp ("del_stimeL", 0.010));
+            d.rightBeats = divBeats (sp ("del_stimeR", 0.010));
+            d.leftMs = std::pow (2000.0, sp ("del_timeL", 0.5));
+            d.rightMs = std::pow (2000.0, sp ("del_timeR", 0.5));
+            d.feedback = sp ("del_fback", 0.4);
+            d.pingPong = flag (sp ("del_pingpong", 0.0));
+            d.wide = sp ("del_wide", 1.0);
+            d.color = sp ("del_color", 0.5);
+            d.modulate = sp ("del_modulate", 0.0);
+            d.dryWet = sp ("del_wet", 0.3);
+        }
+        if (! flag (sp ("rev_mute", 1.0)) && sp ("rev_wet", 0.0) > 0.0)
+        {
+            reverbOn = true;
+            static const char* modes[] = { "Plate1", "Plate2", "Hall", "Sparkles", "Ambience", "Dmension", "Aura" };
+            r.mode = modes[juce::jlimit (0, 6, listIdx (sp ("rev_mode", 0.0)))];
+            r.decay = sp ("rev_decay", 0.6357);
+            r.damp = sp ("rev_damp", 0.15);
+            r.color = sp ("rev_color", 0.65);
+            r.wide = sp ("rev_wide", 0.5);
+            r.dryWet = sp ("rev_wet", 0.3);
+            r.predelayKnob = sp ("rev_pretime", 0.2) * 1000.0;
+        }
+    }
+
+    if (delayOn) vendor::applyDelay (*delay, d);
+    if (reverbOn) vendor::applyReverb (*reverb, r);
+    setParamValue (gid::delayOn, delayOn ? 1.0f : 0.0f);
+    setParamValue (gid::reverbOn, reverbOn ? 1.0f : 0.0f);
 }
 
 StringArray VCCloneAudioProcessor::getPatchNotes() const

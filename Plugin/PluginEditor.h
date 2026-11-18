@@ -131,6 +131,7 @@ private:
     int displayTab = TabArp, modSub = 0;
     juce::TextButton randomiseButton { "Randomise" }, browserButton { "Browser" };
     std::unique_ptr<juce::Component> dragHandle;
+    Control* fxOn[2] {};                          // Delay / Reverb on buttons in the display
     juce::Rectangle<float> displayArea;
     std::vector<std::unique_ptr<EnvelopeGraph>> envGraphs;
 

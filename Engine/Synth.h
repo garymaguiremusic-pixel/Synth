@@ -85,6 +85,7 @@ private:
     float velocity = 1.0f, randomSrc = 0.0f;
     double curNote = 60.0, targetNote = 60.0, glideCoef = 0.0;
     double ph1 = 0, ph2 = 0, ph3 = 0, subPh = 0; bool subOdd = false;
+    double hyper[2][9] {};   // HyperSaw saw phases (Osc 1, Osc 2)
     Envelope ampEnv, filtEnv;
     Lfo lfo[3];
     double lfoVal[3] {};
@@ -103,6 +104,7 @@ private:
         double f1 = 0, f2 = 0, f3 = 0;               // Hz
         double shape1 = 64, shape2 = 64, duty1 = .5, duty2 = .5;
         int wave1 = 0, wave2 = 0, osc3Mode = 0;
+        double hsDensity1 = 0, hsDensity2 = 0, hsSpread1 = 0, hsSpread2 = 0;   // HyperSaw (TI): shape / PW bytes
         double fm = 0; int fmMode = 0;
         double g1 = 1, g2 = 0, gSub = 0, gOsc3 = 0, gNoise = 0, gRing = 0, gMain = 1, drive = 1;
         double noiseColor = 0;

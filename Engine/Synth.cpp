@@ -176,6 +176,8 @@ void Voice::start (Synth& s, int n, float vel, int uIndex, int uCount, double gl
         ph1 = ip; ph2 = initPhase > 0 ? ip : rng.uniform(); ph3 = initPhase > 0 ? ip : rng.uniform();
         subPh = ph1 * 0.5; subOdd = false;
     }
+    if (! wasActive)
+        for (auto& o : hyper) for (auto& h : o) h = rng.uniform();
     // global Retrig buttons (Virus mode) and Phase Lock: start the oscillators at a fixed phase
     if (s.global)
     {
@@ -379,6 +381,9 @@ void Voice::controlTick (Synth& s, int blockLen)
     ctl.duty2 = tables::pulseDuty (pv (Osc2_Pulsewidth) + pwLfo + ((l3dest == 4 || l3dest == 5) ? l3pw : 0.0));
     ctl.wave1 = std::clamp ((int) std::lround (pv (Osc1_Wave_Select)), 0, 63);
     ctl.wave2 = std::clamp ((int) std::lround (pv (Osc2_Wave_Select)), 0, 63);
+    // TI HyperSaw: the shape byte is the density, the pulse-width byte the spread
+    ctl.hsDensity1 = pv (Osc1_Shape) / 127.0; ctl.hsSpread1 = pv (Osc1_Pulsewidth) / 127.0;
+    ctl.hsDensity2 = pv (Osc2_Shape) / 127.0; ctl.hsSpread2 = pv (Osc2_Pulsewidth) / 127.0;
     ctl.sync = p.i (Osc2_Sync) != 0;
     ctl.fmMode = p.i (Osc_FM_Mode);
     ctl.fm = tables::fmIndex (std::clamp (pv (Osc2_FM_Amount) + sgn (FM_Filt_Env_Amt) * filtEnv.level * 127.0
@@ -483,8 +488,38 @@ void Voice::render (Synth& s, double* L, double* R, int numSamples)
             return (1.0 - b) * saw + b * pulse;
         };
 
+        // Virus TI oscillator models (Classic = the C oscillator above)
+        const int model1 = s.global ? s.global->virusOscModel[0] : 0, model2 = s.global ? s.global->virusOscModel[1] : 0;
+        auto hyperSaw = [&] (int o, double dt, double density, double spread)
+        {
+            // up to 9 saws, spread symmetrically (local detune up to about +-50 cents), equal-power sum
+            const int count = 1 + (int) std::lround (density * 8.0);
+            double sum = 0.0;
+            for (int k = 0; k < count; ++k)
+            {
+                const double pos = count > 1 ? (double) k / (count - 1) * 2.0 - 1.0 : 0.0;
+                const double d = dt * std::pow (2.0, pos * spread * spread * 50.0 / 1200.0);
+                double& hp = hyper[o][k];
+                sum += (2.0 * hp - 1.0) - dsp::polyBlep (hp, std::abs (d));
+                hp += d;
+                hp -= std::floor (hp);
+            }
+            return sum / std::sqrt ((double) count);
+        };
+        auto tiOsc = [&] (int o, int model, double& ph, double dt, double shape, double duty, int wave, double density, double spread)
+        {
+            switch (model)
+            {
+                case 1: return (double) hyperSaw (o, dt, density, spread);
+                case 2: case 4: case 5: case 6: case 7:                           // wavetable / grain / formant: the closest wave
+                    return (double) waves.sample (std::clamp (2 + wave, 2, 63), ph, dt);
+                case 3:                                                           // Wave PWM: wave with a moving pulse
+                    return 0.6 * (double) waves.sample (std::clamp (2 + wave, 2, 63), ph, dt) + 0.4 * (double) oscValue (ph, dt, 127.0, duty, wave);
+                default: return (double) oscValue (ph, dt, shape, duty, wave);
+            }
+        };
         const double sh1 = lerp (prevCtl.shape1, ctl.shape1), sh2 = lerp (prevCtl.shape2, ctl.shape2);
-        const double o1 = oscValue (ph1, dt1, sh1, lerp (prevCtl.duty1, ctl.duty1), ctl.wave1);
+        const double o1 = tiOsc (0, model1, ph1, dt1, sh1, lerp (prevCtl.duty1, ctl.duty1), ctl.wave1, ctl.hsDensity1, ctl.hsSpread1);
 
         // --- sub osc (one octave below osc1) --------------------------------------
         double sub = 0.0;
@@ -527,7 +562,7 @@ void Voice::render (Synth& s, double* L, double* R, int numSamples)
         }
         f2 = std::clamp (f2, -0.45 * sr, 0.45 * sr);
         const double dt2 = f2 / sr;
-        const double o2 = oscValue (ph2, dt2, sh2, lerp (prevCtl.duty2, ctl.duty2), ctl.wave2);
+        const double o2 = tiOsc (1, model2, ph2, dt2, sh2, lerp (prevCtl.duty2, ctl.duty2), ctl.wave2, ctl.hsDensity2, ctl.hsSpread2);
 
         // --- osc 3 ------------------------------------------------------------------------
         double o3 = 0.0;
