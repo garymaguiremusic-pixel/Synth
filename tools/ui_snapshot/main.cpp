@@ -34,7 +34,7 @@ int main (int argc, char** argv)
     auto pump = [] (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); };
     pump (200);
 
-    const juce::StringArray modes { "VIRUS", "SYLENTH", "SPIRE" }, pages { "MAIN", "MATRIX", "Browser" };
+    const juce::StringArray modes { "VIRUS", "SYLENTH", "SPIRE" }, pages { "MAIN", "MATRIX", "Browser", "PATTERN", "SPIREDLY", "REVERB" };
     for (int m = 0; m < modes.size(); ++m)
     {
         if (argc > 2 && m != (int) proc->getMode()) continue;     // with a preset: only its mode
@@ -43,8 +43,18 @@ int main (int argc, char** argv)
         pump (150);
         for (auto& page : pages)
         {
-            if (page != "MAIN")
+            auto setFx = [] (juce::AudioProcessor& fx, const char* id, float plain)
+            {
+                for (auto* prm : fx.getParameters())
+                    if (auto* r = dynamic_cast<juce::RangedAudioParameter*> (prm); r && r->getParameterID() == id)
+                        r->setValueNotifyingHost (r->convertTo0to1 (plain));
+            };
+            if (page == "PATTERN") setFx (proc->delayProcessor(), "mode", 2.0f);
+            if (page == "SPIREDLY") { setFx (proc->delayProcessor(), "mode", 6.0f); setFx (proc->delayProcessor(), "spireSync", 1.0f); }
+            if (page == "REVERB") { setFx (proc->reverbProcessor(), "sync", 1.0f); if (auto* b = findButton (panel, "REVERB"); b && b->onClick) b->onClick(); }
+            if (page != "MAIN" && page != "PATTERN" && page != "SPIREDLY" && page != "REVERB")
                 if (auto* b = findButton (panel, page); b && b->onClick) b->onClick();
+            pump (150);
             if (auto* prm = proc->apvts.getParameter (gid::arpMode)) prm->setValueNotifyingHost (prm->convertTo0to1 (1.0f));
             pump (150);
             auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);

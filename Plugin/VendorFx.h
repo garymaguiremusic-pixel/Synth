@@ -38,6 +38,12 @@ namespace vendor
     void applyReverb (juce::AudioProcessor& leadVerb, const ReverbSettings&);
 
     std::unique_ptr<juce::AudioProcessor> createLeadVerb();
+
+    /** A value as Gary's own panels show it (mode, sync and tempo aware), shortened for a knob's value line. */
+    juce::String virusDelayText (juce::AudioProcessor& virusDelay, const juce::String& paramId, float plainValue);
+    juce::String leadVerbText (juce::AudioProcessor& leadVerb, const juce::String& paramId, float plainValue);
+    /** The Virus Delay's mode: 0 Simple, 1 Ping Pong, 2 Pattern, 3 Tape Clocked, 4 Tape Free, 5 Tape Doppler, 6 Spire. */
+    int virusDelayMode (juce::AudioProcessor& virusDelay);
     std::unique_ptr<juce::Component> createLeadVerbPanel (juce::AudioProcessor&);
     juce::Point<int> leadVerbPanelSize();
 }

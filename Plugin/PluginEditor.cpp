@@ -228,6 +228,40 @@ namespace
     String capitalised (String s) { return s.isEmpty() ? s : s.substring (0, 1).toUpperCase() + s.substring (1); }
 }
 
+namespace
+{
+    /** A Virus Delay / LeadVerb parameter whose value reads as Gary's panel shows it. */
+    class VendorTextAdapter : public ApvtsAdapter
+    {
+    public:
+        VendorTextAdapter (RangedAudioParameter& p, String label, std::function<String (float)> fn)
+            : ApvtsAdapter (p, std::move (label)), describe (std::move (fn)) {}
+        String text (int v) const override { return describe ((float) v); }
+    private:
+        std::function<String (float)> describe;
+    };
+}
+
+std::unique_ptr<ParamAdapter> VCClonePanel::fxText (AudioProcessor& p, const char* id, String label, bool reverb)
+{
+    for (auto* prm : p.getParameters())
+        if (auto* r = dynamic_cast<RangedAudioParameter*> (prm))
+            if (r->getParameterID() == id)
+            {
+                const String pid (id);
+                return std::make_unique<VendorTextAdapter> (*r, std::move (label), [&p, pid, reverb] (float v)
+                {
+                    return reverb ? vendor::leadVerbText (p, pid, v) : vendor::virusDelayText (p, pid, v);
+                });
+            }
+    return nullptr;
+}
+
+void VCClonePanel::setWhen (size_t from, std::function<bool()> fn)
+{
+    for (size_t i = from; i < items.size(); ++i) items[i].when = fn;
+}
+
 //==============================================================================
 std::unique_ptr<ParamAdapter> VCClonePanel::envTime (const char* id, const char* syncId, String label)
 {
@@ -494,15 +528,55 @@ void VCClonePanel::buildShared()
         row (-1, 986, 154, 26, 0, { D (H (gid::satCurve, "Curve"), 148, "Curve") });
         row (-1, 984, 210, 40, 12, { K (H (gid::satDrive, "Drive"), 44, 76), K (H (gid::satMix, "Mix"), 40, 76) });
         setGroup (from, fg, 0);
+        // DELAY: the controls of the Virus Delay's current mode, as its own panel shows them
+        auto DT = [&] (const char* id, const char* l) -> AP { return fxText (dl, id, l, false); };
+        auto dm = [&dl] { return vendor::virusDelayMode (dl); };
+        auto delayPage = [&] (std::function<bool()> when, std::function<void()> build)
+        {
+            const size_t f = items.size();
+            build();
+            setGroup (f, fg, 1);
+            setWhen (f, std::move (when));
+        };
+        delayPage ({}, [&] { row (-1, 952, 154, 26, 8, { D (fx (dl, "mode", "Delay Mode"), 104, "Mode") }); });
+        // Simple / Ping Pong / Pattern
+        delayPage ([dm] { return dm() == 1; }, [&] { row (-1, 1064, 154, 26, 0, { D (fx (dl, "pingPongRatio", "Ping Pong Ratio"), 104, "Ratio") }); });
+        delayPage ([dm] { return dm() == 2; }, [&] { row (-1, 1064, 154, 26, 0, { D (fx (dl, "patternType", "Pattern"), 104, "Pattern") }); });
+        delayPage ([dm] { return dm() == 0; }, [&] { row (-1, 1064, 154, 26, 0, { D (fx (dl, "clock", "Clock"), 104, "Clock") }); });
+        delayPage ([dm] { const int m = dm(); return m <= 2; }, [&]
+        {
+            row (-1, 946, 200, 32, 0, { K (DT ("send", "Send"), 32, 57), K (DT ("feedback", "Feedback"), 32, 57), K (DT ("time", "Time"), 32, 57),
+                                        K (DT ("color", "Color"), 32, 57) });
+            row (-1, 946, 266, 32, 0, { K (DT ("depth", "Depth"), 32, 57), K (DT ("rate", "Rate"), 32, 57), K (fx (dl, "shape", "Shape"), 32, 57) });
+        });
+        delayPage ([dm] { const int m = dm(); return m == 1 || m == 2; }, [&] { row (-1, 1117, 266, 32, 0, { K (fx (dl, "clock", "Clock"), 32, 57) }); });
+        // Tape modes
+        delayPage ([dm] { return dm() == 4 || dm() == 5; }, [&] { row (-1, 1064, 154, 26, 0, { D (fx (dl, "tapeClock", "Tape Clock"), 104, "Clock") }); });
+        delayPage ([dm] { const int m = dm(); return m >= 3 && m <= 5; }, [&]
+        {
+            row (-1, 946, 200, 32, 0, { K (DT ("send", "Send"), 32, 57), K (DT ("feedback", "Feedback"), 32, 57) });
+            row (-1, 946, 266, 32, 0, { K (DT ("centerFreq", "Center"), 32, 57), K (DT ("bandwidth", "Bandwidth"), 32, 57), K (DT ("modulation", "Modulation"), 32, 57) });
+        });
+        delayPage ([dm] { return dm() == 3; }, [&] { row (-1, 1060, 200, 32, 0, { K (fx (dl, "clockLeft", "Clock L"), 32, 57), K (fx (dl, "clockRight", "Clock R"), 32, 57) }); });
+        // Spire Delay
+        delayPage ([dm] { return dm() == 6; }, [&]
+        {
+            row (-1, 1064, 154, 26, 6, { T (fx (dl, "spireSync", "Sync"), 49, "Sync", "SYNC"), T (fx (dl, "spirePingPong", "Ping-Pong"), 49, "Ping-pong", "PING") });
+            row (-1, 946, 200, 32, 0, { K (DT ("spireDelayL", "Delay L"), 32, 57), K (DT ("spireDelayR", "Delay R"), 32, 57), K (DT ("spireFeedback", "F.Back"), 32, 57),
+                                        K (DT ("spireDryWet", "Dry/Wet"), 32, 57) });
+            row (-1, 946, 266, 32, 0, { K (DT ("spireColor", "Color"), 32, 57), K (DT ("spireRate", "Rate"), 32, 57), K (DT ("spireModulate", "Modulate"), 32, 57),
+                                        K (DT ("spireWide", "Wide"), 32, 57) });
+        });
+        // output part of every mode
+        delayPage ({}, [&] { row (-1, 946, 332, 32, 0, { K (DT ("drySource", "Dry"), 32, 57), K (DT ("width", "Width"), 32, 57) }); });
+
+        // REVERB: LeadVerb's Spire section, as its own panel shows it
+        auto RT = [&] (const char* id, const char* l) -> AP { return fxText (rv, id, l, true); };
         from = items.size();
-        row (-1, 986, 154, 26, 0, { D (fx (dl, "mode", "Delay Type"), 148, "Type") });
-        row (-1, 946, 210, 40, 0, { K (fx (dl, "send", "Mix"), 40, 76), K (fx (dl, "feedback", "Fbk"), 40, 76), K (fx (dl, "clock", "Time"), 40, 76) });
-        row (-1, 946, 294, 40, 0, { K (fx (dl, "color", "Color"), 40, 76), K (fx (dl, "drySource", "Dry"), 40, 76), K (fx (dl, "depth", "Depth"), 40, 76) });
-        setGroup (from, fg, 1);
-        from = items.size();
-        row (-1, 960, 154, 26, 12, { D (fx (rv, "mode", "Reverb Type"), 120, "Type"), T (fx (rv, "sync", "Pre-delay Sync"), 64, "Pre-dly sync", "SYNC") });
-        row (-1, 946, 210, 40, 0, { K (fx (rv, "dryWet", "Mix"), 40, 76), K (fx (rv, "decay", "Decay"), 40, 76), K (fx (rv, "damp", "Damp"), 40, 76) });
-        row (-1, 946, 294, 40, 0, { K (fx (rv, "color", "Color"), 40, 76), K (fx (rv, "drySource", "Dry"), 40, 76), K (fx (rv, "predelay", "Pre-dly"), 40, 76) });
+        row (-1, 952, 154, 26, 8, { D (fx (rv, "mode", "Reverb Mode"), 104, "Mode"), T (fx (rv, "sync", "Pre-delay Sync"), 60, "Pre-dly sync", "SYNC") });
+        row (-1, 946, 200, 32, 0, { K (RT ("dryWet", "Dry/Wet"), 32, 57), K (RT ("predelay", "Pre-dly"), 32, 57), K (RT ("decay", "Decay"), 32, 57), K (RT ("damp", "Damp"), 32, 57) });
+        row (-1, 946, 266, 32, 0, { K (RT ("color", "Color"), 32, 57), K (RT ("wide", "Wide"), 32, 57), K (RT ("modulation", "Mod"), 32, 57), K (RT ("shelf", "Shelf"), 32, 57) });
+        row (-1, 946, 332, 32, 0, { K (RT ("lift", "Lift"), 32, 57), K (RT ("drySource", "Dry"), 32, 57) });
         setGroup (from, fg, 2);
     }
 
@@ -1131,6 +1205,7 @@ bool VCClonePanel::itemVisible (const Item& it) const
         if (it.indexMask != 0 ? ((it.indexMask >> sel) & 1) == 0 : sel != it.index) return false;
     }
     if (it.group2 >= 0 && tabGroups[(size_t) it.group2]->selected != it.index2) return false;
+    if (it.when && ! it.when()) return false;
     return true;
 }
 
@@ -1352,6 +1427,10 @@ void VCClonePanel::timerCallback()
     for (auto* d : displays) if (d->isVisible()) d->repaint();
     if (eqGraph && eqGraph->isVisible()) eqGraph->repaint();
 
+    {
+        const int fxState = vendor::virusDelayMode (processor.delayProcessor());
+        if (fxState != lastFxState) { lastFxState = fxState; updateVisibility(); }
+    }
     const int mode = currentMode();
     if (mode != lastMode)
     {

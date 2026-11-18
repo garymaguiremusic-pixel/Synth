@@ -112,6 +112,40 @@ namespace vendor
         }
     }
 
+    int virusDelayMode (juce::AudioProcessor& p)
+    {
+        auto& d = static_cast<VirusDelayAudioProcessor&> (p);
+        return juce::roundToInt (d.apvts.getRawParameterValue (vd::ParamIDs::mode)->load());
+    }
+
+    juce::String virusDelayText (juce::AudioProcessor& p, const juce::String& id, float v)
+    {
+        using namespace vd;
+        auto& d = static_cast<VirusDelayAudioProcessor&> (p);
+        auto raw = [&d] (const char* pid) { return d.apvts.getRawParameterValue (pid)->load(); };
+        // the same describe functions as the Virus Delay panel; long ones trimmed for the knob
+        if (id == ParamIDs::send)          return describeSend (v);
+        if (id == ParamIDs::feedback)      return describeFeedback (v);
+        if (id == ParamIDs::time)          return isTimeActive (juce::roundToInt (raw (ParamIDs::clock))) ? describeTime (v) : juce::String ("clocked");
+        if (id == ParamIDs::color)         { const float c = colorToBipolar (v); return std::abs (c) < 0.01f ? juce::String ("Flat") : (c < 0.0f ? "LP " + formatHz (colorLowpassHz (c)) : "HP " + formatHz (colorHighpassHz (c))); }
+        if (id == ParamIDs::rate)          return describeRate (v);
+        if (id == ParamIDs::depth)         return describeDepth (v);
+        if (id == ParamIDs::centerFreq)    return describeCenter (v);
+        if (id == ParamIDs::bandwidth)     return juce::String (bandwidthToOctaves (v), 1) + " oct";
+        if (id == ParamIDs::modulation)    return describeModulation (v);
+        if (id == ParamIDs::spireFeedback) return describeSpireFeedback (v);
+        if (id == ParamIDs::spireRate)     return describeRate (v);
+        if (id == ParamIDs::spireModulate) return describeSpireModulate (v);
+        if (id == ParamIDs::spireDryWet)   return describeSpireDryWet (v);
+        if (id == ParamIDs::spireColor)    { const float c = spireToBipolar (v); return std::abs (c) < 0.01f ? juce::String ("Flat") : (c < 0.0f ? "Hi cut " + formatHz (colorLowpassHz (c)) : "Lo cut " + formatHz (colorHighpassHz (c))); }
+        if (id == ParamIDs::spireDelayL || id == ParamIDs::spireDelayR)
+            return describeSpireDelay (v, raw (ParamIDs::spireSync) > 0.5f, d.gui.bpm.load()).upToFirstOccurrenceOf (" = ", false, false);
+        if (id == ParamIDs::spireWide)     { const float w = spireToBipolar (v); return std::abs (w) < 0.002f ? juce::String ("Mono") : juce::String (w * 100.0f, 0) + " %"; }
+        if (id == ParamIDs::drySource)     { const float g = drySourceToGain (v); return g <= 0.0f ? juce::String ("Off") : juce::String (20.0f * std::log10 (g), 1) + " dB"; }
+        if (id == ParamIDs::width)         { const float w = widthToFactor (v); return w < 0.01f ? juce::String ("Mono") : juce::String (w * 100.0f, 0) + " %"; }
+        return juce::String (v, 1);
+    }
+
     std::unique_ptr<juce::AudioProcessor> createVirusDelay() { return std::make_unique<VirusDelayAudioProcessor>(); }
 
     std::unique_ptr<juce::Component> createVirusDelayPanel (juce::AudioProcessor& p)

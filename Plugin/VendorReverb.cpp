@@ -50,6 +50,32 @@ namespace vendor
         setPlain (p, ParamIDs::dryWet, pct (r.dryWet));
     }
 
+    juce::String leadVerbText (juce::AudioProcessor& p, const juce::String& id, float v)
+    {
+        using namespace lv;
+        auto& r = static_cast<LeadVerbAudioProcessor&> (p);
+        auto raw = [&r] (const char* pid) { return r.apvts.getRawParameterValue (pid)->load(); };
+        const int mode = juce::jlimit (0, NumReverbModes - 1, (int) raw (ParamIDs::mode));
+        // the same functions as the LeadVerb panel; long ones trimmed for the knob
+        if (id == ParamIDs::predelay)   return shortPredelay (v, raw (ParamIDs::sync) > 0.5f);
+        if (id == ParamIDs::decay)      return shortDecay (decayKnobToSeconds (v, mode, raw (ParamIDs::damp)));
+        if (id == ParamIDs::damp)       return formatHz (spire::dampHz (norm100 (v)));
+        if (id == ParamIDs::color)
+        {
+            auto hz = [] (float f) { return f >= 1000.0f ? juce::String (f / 1000.0f, 1) + "k" : juce::String (juce::roundToInt (f)); };
+            const float c = norm100 (v);
+            return c < 0.49f ? "LP " + hz (spire::colorLowpassHz (c)) : c > 0.51f ? "HP " + hz (spire::colorHighpassHz (c)) : juce::String ("Flat");
+        }
+        if (id == ParamIDs::modulation) return v < 0.05f ? juce::String ("Off") : juce::String (modulationKnobToCents (v), 1) + " ct";
+        if (id == ParamIDs::wide)       { const float w = wideKnobToWidth (v); return w < 0.005f ? juce::String ("Mono") : juce::String (w * 100.0f, 0) + " %"; }
+        if (id == ParamIDs::shelf)      return v < 0.05f ? juce::String ("Off") : "+" + juce::String (shelfKnobToDb (v), 1) + " dB";
+        if (id == ParamIDs::lift)       return v < 0.05f ? juce::String ("Off") : juce::String (juce::roundToInt (liftKnobToGain (v) * 100.0f)) + " %";
+        if (id == ParamIDs::drySource)  return v < 0.05f ? juce::String ("Off") : "+" + juce::String (juce::roundToInt (drySourceKnobToAmount (v) * 100.0f)) + " %";
+        if (id == ParamIDs::dryWet)     { const float m = dryWetToMix (v); return juce::String (juce::roundToInt (mixWetGain (m) * 100.0f)) + " % wet"; }
+        if (id == ParamIDs::sidechain)  return v < 0.05f ? juce::String ("Off") : "-" + juce::String (sidechainKnobToAmount (v) * 40.0f, 0) + " dB";
+        return juce::String (v, 1);
+    }
+
     std::unique_ptr<juce::AudioProcessor> createLeadVerb() { return std::make_unique<LeadVerbAudioProcessor>(); }
 
     std::unique_ptr<juce::Component> createLeadVerbPanel (juce::AudioProcessor& p)

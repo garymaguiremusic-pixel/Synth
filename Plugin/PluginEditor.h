@@ -50,6 +50,7 @@ private:
         int mode = -1, layer = -1;           // layer 0: normal cards, 1: the matrix over them
         int group = -1, index = 0;           // shown while tab group 'group' selects 'index'
         int indexMask = 0;                   // non-zero: shown for every tab whose bit is set
+        std::function<bool()> when;          // extra condition (the delay's mode)
         int group2 = -1, index2 = 0;         // and a second tab group (osc MAIN / MORE, Spire LFO / ENV number)
         int style = 0;                       // 0 component, 1 fixed "send to" box, 3 small heading text
     };
@@ -109,6 +110,8 @@ private:
     AP host (const char* id, juce::String label = {});
     AP virus (int offset, juce::String label = {});
     AP fx (juce::AudioProcessor&, const char* id, juce::String label);
+    AP fxText (juce::AudioProcessor&, const char* id, juce::String label, bool reverb);
+    void setWhen (size_t fromItem, std::function<bool()>);
     AP envTime (const char* id, const char* syncId, juce::String label);
 
     void buildShared();
@@ -172,7 +175,7 @@ private:
 
     juce::TooltipWindow tooltipWindow { this, 500 };
     std::unique_ptr<juce::FileChooser> chooser;
-    int lastBankVersion = -1, lastMode = -1;
+    int lastBankVersion = -1, lastMode = -1, lastFxState = -1;
     juce::String statusMessage;
     double statusUntil = 0.0;
 
