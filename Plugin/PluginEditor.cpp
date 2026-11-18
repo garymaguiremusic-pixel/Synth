@@ -768,8 +768,9 @@ VCClonePanel::VCClonePanel (VCCloneAudioProcessor& p) : processor (p)
     prevButton.onClick = [this] { processor.setCurrentProgram (processor.getCurrentProgram() - 1); };
     nextButton.onClick = [this] { processor.setCurrentProgram (processor.getCurrentProgram() + 1); };
     presetBox.onChange = [this] { const int i = presetBox.getSelectedId() - 1; if (i >= 0 && i != processor.getCurrentProgram()) processor.setCurrentProgram (i); };
-    for (Component* c : { (Component*) &loadButton, (Component*) &exportButton })
+    for (Component* c : { (Component*) &loadButton, (Component*) &exportButton, (Component*) &initButton })
         addAndMakeVisible (c);
+    initButton.setButtonText ("INIT");
 
     buildVirus();
     buildSylenth();
@@ -1060,8 +1061,9 @@ void VCClonePanel::showPage (int page)
 void VCClonePanel::resized()
 {
     // top bar: Browser | soundset name | Import | Export
-    browserButton.setBounds (170, 7, 84, 22);
-    lcdTop = Rectangle<int> (262, 5, kWidth - 262 - 196 - 64, 26);
+    initButton.setBounds (170, 7, 56, 22);
+    browserButton.setBounds (232, 7, 84, 22);
+    lcdTop = Rectangle<int> (324, 5, kWidth - 324 - 196 - 64, 26);
     prevButton.setBounds (lcdTop.getRight() + 4, 7, 28, 22);
     nextButton.setBounds (lcdTop.getRight() + 34, 7, 28, 22);
     loadButton.setBounds (kWidth - 188, 7, 88, 22);
