@@ -414,11 +414,14 @@ void Voice::controlTick (Synth& s, int blockLen)
              + sgn (lfoAmt) * lfoVal[1] * 64.0;
     };
     double c1 = cutoffUnits (Cutoff, Filter1_Env_Amt, Filter1_Env_Polarity, Filter1_Keyfollow, Flt1_EnvAmt_Velocity, Cutoff1_Lfo2_Amount);
+    // Global ADSR on: the global Filter envelope (its times already drive filtEnv) moves both cutoffs by its Amount
+    const double gEnv = (s.global && s.global->ampOverride) ? s.global->envAmount * fe : 0.0;
+    c1 += gEnv;
     double c2;
     if (p.i (Filter2_Cutoff_Link))
         c2 = c1 + (pv (Cutoff2) - 64.0) + (sgn (Cutoff2_Lfo2_Amount) - sgn (Cutoff1_Lfo2_Amount)) * lfoVal[1] * 64.0;
     else
-        c2 = cutoffUnits (Cutoff2, Filter2_Env_Amt, Filter2_Env_Polarity, Filter2_Keyfollow, Flt2_EnvAmt_Velocity, Cutoff2_Lfo2_Amount);
+        c2 = cutoffUnits (Cutoff2, Filter2_Env_Amt, Filter2_Env_Polarity, Filter2_Keyfollow, Flt2_EnvAmt_Velocity, Cutoff2_Lfo2_Amount) + gEnv;
     ctl.cut1 = tables::cutoffHz (std::clamp (c1, -20.0, 150.0));
     ctl.cut2 = tables::cutoffHz (std::clamp (c2, -20.0, 150.0));
     const double r1 = std::clamp (pv (Filter1_Resonance) + velMod (Resonance1_Velocity) * 0.5 + sgn (Reso_Lfo1_Amount) * lfoVal[0] * 64.0, 0.0, 127.0);

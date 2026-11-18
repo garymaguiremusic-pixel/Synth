@@ -603,9 +603,9 @@ void VCClonePanel::addEnvPages (int m, int tabGroup)
         smallToggle (m, H (sync, "Sync"), { 338, 426, 42, 16 }, "SYNC");
         row (m, 128, 556, 38, 0, { K (envTime (amp ? gid::ampA : gid::fltA, sync, "Attack"), 38, 64), K (envTime (amp ? gid::ampD : gid::fltD, sync, "Decay"), 38, 64),
                                    K (H (amp ? gid::ampS : gid::fltS, "Sustain"), 38, 64), K (envTime (amp ? gid::ampR : gid::fltR, sync, "Release"), 38, 64) });
-        fixedBox (m, { 396, 420, 112, 28 }, amp ? "Volume" : "Cutoff", "Send to");
+        fixedBox (m, { 396, 420, 112, 28 }, amp ? "Volume" : "Cut 1 + 2", "Send to");
         if (amp) row (m, 422, 480, 38, 0, { K (H (gid::velocity, "Vel"), 38, 60) });
-        else row (m, 392, 480, 38, 0, { K (H (gid::envAmt, "Amount"), 38, 60), K (H (gid::keytrack, "Keytrk"), 38, 60) });
+        else row (m, 422, 480, 38, 0, { K (H (gid::envAmt, "Env amt"), 38, 60) });
         setGroup (from, tabGroup, page);
     }
 }

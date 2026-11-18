@@ -414,10 +414,12 @@ void SylenthEngine::renderVoice (Voice& v, double* L, double* R, int n)
 
             // Filter Control is the master: its cutoff / resonance offset both filters (centre = no change)
             const double fctlCut = (p (FCtl) - 0.5), fctlRes = p (FCtl + 1), fctlKey = p (FCtl + 3);
+            // Global ADSR on: the global Filter envelope moves both filters by its Amount
+            const double gEnv = ampOverride ? global->envAmount / 127.0 * v.gstage.filterEnvelope() : 0.0;
             for (int f = 0; f < 2; ++f)
             {
                 const int b = f == 0 ? FiltA : FiltB;
-                double cut = p (b + 2) + fctlCut + v.mod[DCutoffAB] + (f == 0 ? v.mod[DCutoffA] : v.mod[DCutoffB])
+                double cut = p (b + 2) + fctlCut + gEnv + v.mod[DCutoffAB] + (f == 0 ? v.mod[DCutoffA] : v.mod[DCutoffB])
                            + (p (b + 5) + fctlKey) * (v.curNote - 60) / 120.0;
                 const double res = std::clamp (p (b + 3) + fctlRes + v.mod[DResoAB] + (f == 0 ? v.mod[DResoA] : v.mod[DResoB]), 0.0, 1.0);
                 const double hz = std::min (cutoffHz (cut), sr * 0.45);

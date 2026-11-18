@@ -378,8 +378,10 @@ void SpireEngine::renderVoice (Voice& v, double* L, double* R, int n)
             {
                 const int base = flt1_type + f * 4;
                 const int type = listIndex (p (base));
-                double cut = p (base + 2) + (f == 0 ? v.modCut1 : v.modCut2) + keytrack * (v.curNote - 60) / 127.0;
-                if (f == 1 && flag (p (flt_link))) cut = p (flt1_cut) + (p (flt2_cut) - 0.5) + v.modCut1 + keytrack * (v.curNote - 60) / 127.0;
+                // Global ADSR on: the global Filter envelope moves both filters by its Amount
+                const double gEnv = ampOverride ? global->envAmount / 127.0 * v.gstage.filterEnvelope() : 0.0;
+                double cut = p (base + 2) + gEnv + (f == 0 ? v.modCut1 : v.modCut2) + keytrack * (v.curNote - 60) / 127.0;
+                if (f == 1 && flag (p (flt_link))) cut = p (flt1_cut) + (p (flt2_cut) - 0.5) + gEnv + v.modCut1 + keytrack * (v.curNote - 60) / 127.0;
                 const double hz = std::min (cutoffHz (cut), sr * 0.45);
                 const double res = std::clamp (p (base + 3) + (f == 0 ? v.modRes1 : v.mod[TRes2]), 0.0, 1.0);
                 for (int c = 0; c < 2; ++c)
